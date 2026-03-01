@@ -6,7 +6,7 @@ The name is a deliberate nod to Google Analytics' legacy `ga.js` tracking script
 
 ## Why?
 
-Google Analytics used to be my go-to for web analytics. Then it became impossible to use — bloated, confusing, and way too heavy for what most sites actually need. Using GA4 feels like opening Microsoft Word when all you want is a text editor.
+Google Analytics used to be my go-to for web analytics. Then it became impossible to use — bloated, confusing, way too heavy for what most sites actually need, and full of bot spam that distorts your statistics. Using GA4 feels like opening Microsoft Word when all you want is a text editor.
 
 So I built my own analytics for a hobby project ([afroute.com](https://afroute.com)). It started simple — just pageviews and basic stats — but grew in functionality over time. Eventually I wanted to rip it out into its own project, and figured: why not share it, in case others are equally tired of ga.js?
 
