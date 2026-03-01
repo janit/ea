@@ -16,19 +16,55 @@ body {
   justify-content: center;
 }
 main {
+  max-width: 640px;
   padding: 2rem;
 }
 h1 {
   font-size: 2rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
 }
 h1 span { color: #1a9a1a; }
-p {
+.tagline {
   color: #1a9a1a;
   font-size: 0.9rem;
-  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+h2 {
+  font-size: 1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: #33ff33;
+}
+h2::before { content: "## "; color: #1a9a1a; }
+p, li {
+  color: #1a9a1a;
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+ul {
+  list-style: none;
+  padding: 0;
+}
+li::before {
+  content: "- ";
+  color: #33ff33;
+}
+code {
+  color: #33ff33;
+  background: #111;
+  padding: 0.1em 0.3em;
+}
+pre {
+  background: #111;
+  border: 1px solid #1a3a1a;
+  padding: 0.8rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  color: #33ff33;
 }
 a { color: #33ff33; }
+a:hover { color: #66ff66; }
 .cursor {
   display: inline-block;
   width: 0.6em;
@@ -40,15 +76,67 @@ a { color: #33ff33; }
 @keyframes blink {
   50% { opacity: 0; }
 }
+hr {
+  border: none;
+  border-top: 1px solid #1a3a1a;
+  margin: 1.5rem 0;
+}
+.footer {
+  margin-top: 2rem;
+  font-size: 0.75rem;
+  color: #1a5a1a;
+}
 </style>
 </head>
 <body>
 <main>
 <h1>&gt; ea.js <span>— Echelon Analytics</span></h1>
-<p>Privacy-first, self-hosted web analytics.</p>
-<p>Google Analytics sucks now so I rolled my own.<span class="cursor"></span></p>
-<br>
+<p class="tagline">Privacy-first, self-hosted web analytics.<br>
+Drop in a single script tag — no cookie banners needed.<span class="cursor"></span></p>
+
+<hr>
+
+<h2>Why?</h2>
+<p>Google Analytics used to be my go-to. Then GA4 happened — bloated, confusing, and way too heavy.
+Using it feels like opening Microsoft Word when all you want is a text editor.
+So I built my own for <a href="https://afroute.com">afroute.com</a> and ripped it out to share.</p>
+
+<h2>Quick Start</h2>
+<pre>ECHELON_DB_PATH=./echelon.db deno run -A main.ts</pre>
+<pre>&lt;script src="https://your-host/ea.js" data-site="my-site"&gt;&lt;/script&gt;</pre>
+<p>That's it. Pageviews, bounces, and sessions tracked automatically.</p>
+
+<h2>How It Works</h2>
+<ul>
+<li>1x1 pixel beacon + <code>sendBeacon</code> for events</li>
+<li>Cookieless by default — daily-rotating HMAC hash, no cross-day tracking</li>
+<li>No cookie consent banners needed (GDPR/ePrivacy compliant)</li>
+<li>Optional persistent cookies via <code>data-cookie</code></li>
+<li>SQLite with WAL mode — single file, zero config</li>
+</ul>
+
+<h2>Features</h2>
+<ul>
+<li>Auto-tracked pageviews, bounces, sessions</li>
+<li>Click, scroll depth, and hover tracking</li>
+<li>Bot detection with heuristic scoring (0-100)</li>
+<li>A/B experiment tracking</li>
+<li>Admin dashboard with realtime visitors</li>
+<li>REST API for stats, bot management, experiments</li>
+</ul>
+
+<h2>Tech Stack</h2>
+<ul>
+<li>Deno + Fresh 2.2.0 (Preact)</li>
+<li>SQLite via <code>@db/sqlite</code></li>
+<li>Preact islands + <code>@preact/signals</code></li>
+</ul>
+
+<hr>
+
 <p><a href="https://github.com/janit/ea">github.com/janit/ea</a></p>
+
+<p class="footer">AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen</p>
 </main>
 </body>
 </html>
