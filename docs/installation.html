@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installation — ea.js Echelon Analytics</title>
+<meta name="description" content="Install Echelon Analytics with Deno or Docker. Setup guide for reverse proxies (Caddy, Nginx), Cloudflare, authentication, and single-process deployment.">
+<link rel="canonical" href="https://ea.js.org/installation.html">
+<link rel="icon" href="favicon.ico">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ea.js — Echelon Analytics">
+<meta property="og:title" content="Installation — ea.js Echelon Analytics">
+<meta property="og:description" content="Install Echelon Analytics with Deno or Docker. Setup guide for reverse proxies, Cloudflare, and authentication.">
+<meta property="og:url" content="https://ea.js.org/installation.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Installation — ea.js Echelon Analytics">
+<meta name="twitter:description" content="Install Echelon Analytics with Deno or Docker. Setup guide for reverse proxies, Cloudflare, and authentication.">
+<link rel="stylesheet" href="css/style.css">
+<script async src="https://ea.islets.app/ea.js" data-site="echelon-analytics" data-cookie></script>
+</head>
+<body>
+<nav><a href="index.html">ea.js</a> <span class="sep">/</span> <a href="installation.html">installation</a></nav>
+<main>
+<h1>&gt; Installation</h1>
+<p class="tagline">Get Echelon Analytics running in under a minute.</p>
+
+<hr>
+
+<h2>Prerequisites</h2>
+<ul>
+<li><a href="https://deno.land">Deno</a> 2.x (includes SQLite via <code>node:sqlite</code>)</li>
+<li>No external database — single SQLite file, zero config</li>
+</ul>
+
+<h2>Quick Start</h2>
+<pre>git clone https://github.com/janit/ea.git
+cd ea/echelon-analytics
+deno task dev</pre>
+<p>The dev server starts on <code>http://localhost:1947</code> with Vite HMR.</p>
+
+<h2>Add the Tracker</h2>
+<p>Drop this script tag into any page you want to track:</p>
+<pre>&lt;script async src="https://your-host/ea.js" data-site="my-site"&gt;&lt;/script&gt;</pre>
+<p>That's it. Pageviews, bounces, and sessions are tracked automatically.</p>
+
+<h2>Development Commands</h2>
+<p>All commands run from <code>echelon-analytics/</code>:</p>
+<pre># Development server (Vite HMR)
+deno task dev
+
+# Production build
+deno task build
+
+# Start production server (must build first)
+deno task start
+
+# Check formatting, lint, and type-check
+deno task check
+
+# Individual checks
+deno fmt --check .
+deno lint .
+deno check main.ts
+
+# Update Fresh framework
+deno task update</pre>
+
+<h2>Docker</h2>
+<p>Multi-stage build with non-root user and health check:</p>
+<pre># Build
+docker build -f confs/Dockerfile -t echelon-analytics .
+
+# Run
+docker run -p 1947:1947 -v echelon-data:/app/data echelon-analytics</pre>
+
+<p>The container exposes port <code>1947</code>. Mount a volume at <code>/app/data/</code> for the SQLite database (required for WAL mode to work correctly).</p>
+
+<h3>Docker Details</h3>
+<ul>
+<li>Base image: <code>denoland/deno:2.7.1</code></li>
+<li>Uses <code>tini</code> for proper PID 1 signal handling</li>
+<li>Non-root user <code>echelon</code> (UID 1001)</li>
+<li>Health check: <code>GET /api/health</code> every 30s</li>
+<li>Build args: <code>VERSION</code>, <code>GIT_HASH</code></li>
+</ul>
+
+<h3>Docker with Build Args</h3>
+<pre>docker build -f confs/Dockerfile \
+  --build-arg VERSION=1.0.0 \
+  --build-arg GIT_HASH=$(git rev-parse --short HEAD) \
+  -t echelon-analytics .</pre>
+
+<h2>Reverse Proxy (Caddy)</h2>
+<p>Example Caddyfile for automatic HTTPS:</p>
+<pre>echelon.example.com {
+    reverse_proxy localhost:1947
+}</pre>
+
+<h2>Reverse Proxy (Nginx)</h2>
+<pre>server {
+    server_name echelon.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:1947;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}</pre>
+<p>Set <code>ECHELON_TRUST_PROXY=true</code> when behind a reverse proxy to read the real client IP from <code>X-Forwarded-For</code> / <code>X-Real-IP</code>.</p>
+
+<h2>Cloudflare</h2>
+<p>When deployed behind Cloudflare, set:</p>
+<pre>ECHELON_BEHIND_CLOUDFLARE=true
+ECHELON_TRUST_PROXY=true</pre>
+<p>This enables reading Cloudflare headers (<code>cf-ipcountry</code>, <code>cf-connecting-ip</code>) for geo data and bot scoring.</p>
+
+<h2>Authentication Setup</h2>
+<h3>API Token</h3>
+<pre>ECHELON_SECRET=your-secret-token-here</pre>
+<p>Use with <code>Authorization: Bearer your-secret-token-here</code> header.</p>
+
+<h3>Username/Password</h3>
+<pre># Generate a password hash
+cd echelon-analytics
+deno eval "import{hashPassword}from'./lib/auth.ts';console.log(await hashPassword('yourpassword'))"
+
+# Set environment variables
+ECHELON_USERNAME=admin
+ECHELON_PASSWORD_HASH=pbkdf2$600000$&lt;salt&gt;$&lt;hash&gt;</pre>
+<p>Both auth modes can be used simultaneously.</p>
+
+<h2>Single-Process Constraint</h2>
+<p>Echelon Analytics keeps all state in memory (sessions, rate limiter, burst maps, buffered writers). You must run with a single Deno worker — do <strong>not</strong> use the <code>--parallel</code> flag with <code>deno serve</code>.</p>
+
+<hr>
+<div class="doc-nav">
+<a href="features.html">Features</a>
+<a href="api.html">API Reference</a>
+<a href="bot-defense.html">Bot Defense</a>
+<a href="configuration.html">Configuration</a>
+<a href="architecture.html">Architecture</a>
+</div>
+<p class="footer">AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen</p>
+</main>
+</body>
+</html>

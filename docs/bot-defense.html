@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WASM Bot Defense — ea.js Echelon Analytics</title>
+<meta name="description" content="WebAssembly proof-of-work bot defense: runtime-generated WASM challenges that rotate every 6 hours, heuristic scoring (0-100), Cloudflare integration, burst detection, and rate limiting.">
+<link rel="canonical" href="https://ea.js.org/bot-defense.html">
+<link rel="icon" href="favicon.ico">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ea.js — Echelon Analytics">
+<meta property="og:title" content="WASM Bot Defense — ea.js Echelon Analytics">
+<meta property="og:description" content="WebAssembly proof-of-work bot defense: runtime-generated WASM challenges that rotate every 6 hours, heuristic scoring, Cloudflare integration, and rate limiting.">
+<meta property="og:url" content="https://ea.js.org/bot-defense.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="WASM Bot Defense — ea.js Echelon Analytics">
+<meta name="twitter:description" content="WebAssembly proof-of-work bot defense: runtime-generated WASM challenges, heuristic scoring, Cloudflare integration, and rate limiting.">
+<link rel="stylesheet" href="css/style.css">
+<script async src="https://ea.islets.app/ea.js" data-site="echelon-analytics" data-cookie></script>
+</head>
+<body>
+<nav><a href="index.html">ea.js</a> <span class="sep">/</span> <a href="bot-defense.html">bot-defense</a></nav>
+<main>
+<h1>&gt; Bot Defense</h1>
+<p class="tagline">Multi-layered bot detection: PoW challenges, heuristic scoring, and Cloudflare integration.</p>
+
+<hr>
+
+<h2>Overview</h2>
+<p>Every incoming request is scored from 0 (definitely human) to 100 (definitely bot). Views and events with <code>bot_score &ge; 50</code> are excluded from daily rollups. Known bot User-Agents are dropped entirely before scoring.</p>
+
+<h2>Known Bot UA Filter</h2>
+<p>Requests matching any pattern in <code>ECHELON_BOT_UA_PATTERNS</code> are dropped before scoring. Default list includes:</p>
+<ul>
+<li>Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot</li>
+<li>GPTBot, ClaudeBot, ChatGPT-User, Google-Extended</li>
+<li>curl, wget, python-requests, HeadlessChrome, Puppeteer, Playwright</li>
+<li>And many more crawlers and automation tools</li>
+</ul>
+
+<h2>Bot Scoring Factors</h2>
+<table>
+<tr><th>Signal</th><th>Condition</th><th>Points</th></tr>
+<tr><td>CF verified bot</td><td>Cloudflare confirms known bot UA</td><td>+15</td></tr>
+<tr><td>CF bot score &le; 2</td><td>Very confident bot</td><td>+50</td></tr>
+<tr><td>CF bot score 3–29</td><td>Likely automated</td><td>+30</td></tr>
+<tr><td>CF bot score 30–50</td><td>Uncertain</td><td>+10</td></tr>
+<tr><td>Interaction &lt; 850ms</td><td>Beacon fired too fast</td><td>+20</td></tr>
+<tr><td>Interaction 850–1000ms</td><td>Suspiciously fast</td><td>+8</td></tr>
+<tr><td>Suspect country</td><td>IP in <code>ECHELON_SUSPECT_COUNTRIES</code></td><td>+30 (configurable)</td></tr>
+<tr><td>Per-site suspect country</td><td>IP in <code>ECHELON_SITE_SUSPECT_COUNTRIES</code></td><td>+30 (stacks with global)</td></tr>
+<tr><td>Burst detection</td><td>&gt; 15 requests in 5-minute window</td><td>+25</td></tr>
+<tr><td>Missing Accept-Language</td><td>No header present</td><td>+10</td></tr>
+<tr><td>Missing Sec-CH-UA + Sec-Fetch-Site</td><td>Both headers absent</td><td>+10</td></tr>
+<tr><td>Unrealistic screen</td><td>Width/height &le; 0 or &gt; 10000</td><td>+10</td></tr>
+<tr><td>No referrer + deep path</td><td>Direct visit to path with &ge; 2 segments</td><td>+5</td></tr>
+<tr><td>PoW token missing</td><td>No proof-of-work token sent</td><td>+15</td></tr>
+<tr><td>PoW token invalid</td><td>Token fails verification</td><td>+25</td></tr>
+</table>
+<p>Score is capped at 100.</p>
+
+<h2>Proof-of-Work System</h2>
+<p>Every request for <code>/ea.js</code> embeds a WebAssembly blob and a challenge string. The browser must solve the challenge before sending beacons.</p>
+
+<h3>How It Works</h3>
+<ul>
+<li>A WASM module is generated from a 64-byte random seed every <strong>6 hours</strong></li>
+<li>Implements a SipHash-inspired algorithm with randomized constants</li>
+<li>Challenge string rotates every <strong>minute</strong> (HMAC-SHA256 of minute bucket)</li>
+<li>Client computes: <code>token = wasm.solve(challenge + ":" + sessionId + ":" + siteId)</code></li>
+<li>Token is a 32-character hex string</li>
+<li>Cached in <code>sessionStorage</code>, re-solved on 10% of requests</li>
+<li>WASM solve is awaited up to 150ms before sending the beacon</li>
+</ul>
+
+<h3>Server Verification</h3>
+<p>The server tries all combinations of:</p>
+<ul>
+<li>Current + previous WASM slots (covers 6-hour rotation)</li>
+<li>Last N minute buckets (configurable via <code>ECHELON_CHALLENGE_WINDOW_MINUTES</code>, default 10)</li>
+</ul>
+<p>Returns <code>"valid"</code>, <code>"missing"</code>, or <code>"invalid"</code> — each adding different penalty points.</p>
+
+<h2>Burst Detection</h2>
+<ul>
+<li>Window: 5 minutes per IP</li>
+<li>Threshold: 15 requests triggers +25 penalty</li>
+<li>Map size: max 100,000 entries (pruned when exceeded)</li>
+</ul>
+
+<h2>Rate Limiting</h2>
+<p>Tracking endpoints (<code>/b.gif</code>, <code>/e</code>) are rate-limited per IP:</p>
+<ul>
+<li>Default: 100 requests per 60-second window</li>
+<li>Configurable via <code>ECHELON_RATE_LIMIT_MAX</code> and <code>ECHELON_RATE_LIMIT_WINDOW_MS</code></li>
+</ul>
+
+<h2>Cloudflare Integration</h2>
+<p>Set <code>ECHELON_BEHIND_CLOUDFLARE=true</code> to enable:</p>
+<ul>
+<li>Read <code>cf-ipcountry</code> for geo data (ignores <code>XX</code> and <code>T1</code>)</li>
+<li>Read Cloudflare bot score from <code>cf-bot-score</code> header</li>
+<li>Detect CF-verified bots</li>
+<li>Use <code>cf-connecting-ip</code> for real client IP</li>
+</ul>
+
+<h2>Referrer Classification</h2>
+<p>Incoming referrers are classified into categories:</p>
+<table>
+<tr><th>Type</th><th>Domains</th></tr>
+<tr><td><code>ai</code></td><td>perplexity.ai, chat.openai.com, chatgpt.com, claude.ai, you.com, phind.com, copilot.microsoft.com, gemini.google.com, poe.com</td></tr>
+<tr><td><code>search</code></td><td>Google (22 TLDs), bing.com, yahoo.com, duckduckgo.com, yandex.com/ru, ecosia.org</td></tr>
+<tr><td><code>social</code></td><td>facebook.com, twitter.com, x.com, reddit.com, linkedin.com, instagram.com, t.co</td></tr>
+<tr><td><code>direct_or_unknown</code></td><td>Everything else</td></tr>
+</table>
+
+<h2>Manual Exclusion</h2>
+<p>Via the admin dashboard or API, you can manually exclude specific visitor IDs from rollups:</p>
+<pre># Exclude
+POST /api/bots/exclude
+{ "visitor_id": "abc123", "label": "Known bot" }
+
+# Re-include
+DELETE /api/bots/exclude/abc123</pre>
+
+<h2>Discard Threshold</h2>
+<p>Set <code>ECHELON_BOT_DISCARD_THRESHOLD</code> to a score (e.g., <code>80</code>) to discard high-score requests before they're even stored. Default is <code>0</code> (store all, filter at rollup time).</p>
+
+<hr>
+<div class="doc-nav">
+<a href="installation.html">Installation</a>
+<a href="features.html">Features</a>
+<a href="api.html">API Reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="architecture.html">Architecture</a>
+</div>
+<p class="footer">AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen</p>
+</main>
+</body>
+</html>

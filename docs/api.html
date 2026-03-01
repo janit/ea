@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Reference — ea.js Echelon Analytics</title>
+<meta name="description" content="REST API reference for Echelon Analytics: stats, realtime monitoring, bot management, UTM campaigns, A/B experiments, performance metrics, and data ingest.">
+<link rel="canonical" href="https://ea.js.org/api.html">
+<link rel="icon" href="favicon.ico">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ea.js — Echelon Analytics">
+<meta property="og:title" content="API Reference — ea.js Echelon Analytics">
+<meta property="og:description" content="REST API reference: stats, realtime monitoring, bot management, UTM campaigns, A/B experiments, and performance metrics.">
+<meta property="og:url" content="https://ea.js.org/api.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="API Reference — ea.js Echelon Analytics">
+<meta name="twitter:description" content="REST API reference: stats, realtime monitoring, bot management, UTM campaigns, A/B experiments, and performance metrics.">
+<link rel="stylesheet" href="css/style.css">
+<script async src="https://ea.islets.app/ea.js" data-site="echelon-analytics" data-cookie></script>
+</head>
+<body>
+<nav><a href="index.html">ea.js</a> <span class="sep">/</span> <a href="api.html">api</a></nav>
+<main>
+<h1>&gt; API Reference</h1>
+<p class="tagline">REST API for stats, bot management, campaigns, experiments, and performance metrics.</p>
+
+<hr>
+
+<h2>Authentication</h2>
+<p>All API endpoints (except <code>/api/health</code>) require one of:</p>
+<ul>
+<li><strong>Bearer token</strong>: <code>Authorization: Bearer &lt;ECHELON_SECRET&gt;</code></li>
+<li><strong>Session cookie</strong>: <code>echelon_session</code> from password login</li>
+</ul>
+<p>Cookie-authenticated POST/PATCH/DELETE requests require CSRF validation (Origin or Referer header must match the server host).</p>
+
+<hr>
+
+<h2>Public Endpoints</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/ea.js</span></div>
+<p>Returns the tracker script with embedded WASM proof-of-work challenge. No auth required.</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/b.gif</span></div>
+<p>Pageview beacon. Returns a 1x1 transparent GIF. Query params include path, site ID, session ID, PoW token, screen dimensions, and UTM data. No auth required.</p>
+
+<div class="endpoint"><span class="method">POST</span> <span class="path">/e</span></div>
+<p>Behavioral events endpoint (via <code>sendBeacon</code>). Accepts JSON with event array, site ID, and PoW token. Returns <code>204 No Content</code>. Max 16 KB body, max 20 events per request. No auth required.</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/health</span></div>
+<p>Health check. No auth required.</p>
+<pre>{ "status": "ok", "service": "Echelon Analytics" }</pre>
+
+<hr>
+
+<h2>Stats</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/overview?site_id=X&amp;days=N</span></div>
+<p>Overview statistics for a site. Visitors, pageviews, top pages, devices, countries, referrers, daily trends. <code>days</code> defaults to 30 (max 730).</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/realtime?site_id=X</span></div>
+<p>Realtime stats: active visitors, pageviews, and active paths from the last 5 minutes.</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/summary</span></div>
+<p>Summary across all sites.</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/vitals</span></div>
+<p>Live system vitals: in-memory buffer sizes and 24h aggregates.</p>
+<pre>{
+  "buffers": { "views": 42, "events": 17 },
+  "last_24h": {
+    "total_views": 1234,
+    "human_views": 1100,
+    "bot_views": 134,
+    "unique_visitors": 890
+  }
+}</pre>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/campaigns?days=N</span></div>
+<p>Campaign statistics. Optional <code>id</code> param for detailed breakdown by source, medium, content, and term. <code>days</code> defaults to 30 (max 90).</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/experiments?experiment_id=X</span></div>
+<p>Experiment statistics with variant conversion rates and significance testing.</p>
+
+<hr>
+
+<h2>Campaigns</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/campaigns</span></div>
+<p>List all UTM campaigns.</p>
+<pre>[{
+  "id": "spring-2026",
+  "name": "Spring Launch",
+  "utm_campaign": "spring-2026",
+  "site_id": "default",
+  "status": "active",
+  "created_at": "2026-03-01T00:00:00Z"
+}]</pre>
+
+<div class="endpoint"><span class="method">POST</span> <span class="path">/api/campaigns</span></div>
+<p>Create a campaign. Returns <code>201</code>.</p>
+<pre># Request
+{
+  "id": "spring-2026",
+  "name": "Spring Launch",
+  "utm_campaign": "spring-2026",
+  "site_id": "default"
+}
+
+# Response
+{ "created": "spring-2026" }</pre>
+<p><code>id</code> must be alphanumeric plus <code>._-</code> (max 128 chars). <code>site_id</code> defaults to <code>"default"</code>.</p>
+
+<div class="endpoint"><span class="method">PATCH</span> <span class="path">/api/campaigns/:id</span></div>
+<p>Update campaign status.</p>
+<pre>{ "status": "active" | "paused" | "archived" }</pre>
+
+<div class="endpoint"><span class="method">DELETE</span> <span class="path">/api/campaigns/:id</span></div>
+<p>Delete a campaign. Returns <code>{ "deleted": "campaign-id" }</code>.</p>
+
+<hr>
+
+<h2>Experiments</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/experiments</span></div>
+<p>List all A/B experiments with variants.</p>
+
+<div class="endpoint"><span class="method">POST</span> <span class="path">/api/experiments</span></div>
+<p>Create an experiment. Returns <code>201</code>.</p>
+<pre>{
+  "experiment_id": "checkout-v2",
+  "name": "Checkout Redesign",
+  "description": "Test new checkout flow",
+  "metric_event_type": "purchase",
+  "allocation_percent": 100,
+  "variants": [
+    { "variant_id": "control", "name": "Original", "weight": 50, "is_control": true },
+    { "variant_id": "redesign", "name": "New Flow", "weight": 50 }
+  ]
+}</pre>
+<p>Max 20 variants. <code>config</code> (optional JSON) max 4096 chars per variant.</p>
+
+<div class="endpoint"><span class="method">PATCH</span> <span class="path">/api/experiments/:id</span></div>
+<p>Update experiment status. Sets <code>started_at</code> on transition to <code>"active"</code> and <code>ended_at</code> on <code>"completed"</code> or <code>"archived"</code>.</p>
+<pre>{ "status": "draft" | "active" | "paused" | "completed" | "archived" }</pre>
+
+<hr>
+
+<h2>Bot Management</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/bots/suspicious?site_id=X&amp;min_score=25&amp;limit=50</span></div>
+<p>List suspicious visitors. Returns aggregated metrics per visitor: max bot score, pageview count, devices, countries, exclusion status. <code>limit</code> max 200.</p>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/bots/excluded</span></div>
+<p>List all manually excluded visitors with pageview counts.</p>
+
+<div class="endpoint"><span class="method">POST</span> <span class="path">/api/bots/exclude</span></div>
+<p>Exclude a visitor from rollups. Returns <code>201</code>.</p>
+<pre>{ "visitor_id": "abc123", "label": "Known bot" }</pre>
+
+<div class="endpoint"><span class="method">DELETE</span> <span class="path">/api/bots/exclude/:id</span></div>
+<p>Remove a visitor from the exclusion list.</p>
+<pre>{ "included": "abc123" }</pre>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/bots/visitor/:id</span></div>
+<p>Detailed visitor data: exclusion status, last 100 views, and last 100 events.</p>
+
+<hr>
+
+<h2>Performance Metrics</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/perf?category=X&amp;metric=X&amp;limit=100&amp;since=ISO8601</span></div>
+<p>Query stored performance metrics. All params optional.</p>
+
+<div class="endpoint"><span class="method">POST</span> <span class="path">/api/perf</span></div>
+<p>Ingest performance metrics (e.g. from CI/CD).</p>
+<pre>[{
+  "category": "build",
+  "metric": "bundle_size",
+  "value": 142.5,
+  "unit": "kb"
+}]</pre>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/perf/trends?limit=30&amp;since=ISO8601</span></div>
+<p>Performance trends over time.</p>
+
+<hr>
+
+<h2>Sites</h2>
+
+<div class="endpoint"><span class="method">GET</span> <span class="path">/api/sites/:id</span></div>
+<p>Get site settings (consent CSS).</p>
+
+<div class="endpoint"><span class="method">PATCH</span> <span class="path">/api/sites/:id</span></div>
+<p>Update site consent CSS (max 4096 chars).</p>
+
+<hr>
+
+<h2>Data Ingest</h2>
+
+<div class="endpoint"><span class="method">POST</span> <span class="path">/api/ingest</span></div>
+<p>Bulk ingest visitor views and events. Max 1 MB body.</p>
+
+<hr>
+
+<h2>Error Responses</h2>
+<table>
+<tr><th>Code</th><th>Meaning</th></tr>
+<tr><td><code>400</code></td><td>Missing or invalid parameters</td></tr>
+<tr><td><code>401</code></td><td>Unauthorized — missing or invalid auth</td></tr>
+<tr><td><code>404</code></td><td>Resource not found</td></tr>
+<tr><td><code>409</code></td><td>Conflict — duplicate resource</td></tr>
+<tr><td><code>413</code></td><td>Request body too large</td></tr>
+<tr><td><code>429</code></td><td>Rate limited</td></tr>
+</table>
+
+<hr>
+<div class="doc-nav">
+<a href="installation.html">Installation</a>
+<a href="features.html">Features</a>
+<a href="bot-defense.html">Bot Defense</a>
+<a href="configuration.html">Configuration</a>
+<a href="architecture.html">Architecture</a>
+</div>
+<p class="footer">AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,621 @@
+# ea.js — Echelon Analytics: Full Documentation
+
+> Privacy-first, self-hosted, cookieless web analytics. Single script tag, single SQLite database. AGPL-3.0.
+
+Repository: https://github.com/janit/ea
+Website: https://ea.js.org
+
+---
+
+# Installation
+
+## Prerequisites
+
+- Deno 2.x (includes SQLite via node:sqlite)
+- No external database — single SQLite file, zero config
+
+## Quick Start
+
+```
+git clone https://github.com/janit/ea.git
+cd ea/echelon-analytics
+deno task dev
+```
+
+The dev server starts on http://localhost:1947 with Vite HMR.
+
+## Add the Tracker
+
+```html
+<script async src="https://your-host/ea.js" data-site="my-site"></script>
+```
+
+Pageviews, bounces, and sessions are tracked automatically.
+
+## Development Commands
+
+All commands run from echelon-analytics/:
+
+```
+deno task dev        # Development server (Vite HMR)
+deno task build      # Production build
+deno task start      # Start production server (must build first)
+deno task check      # Check formatting, lint, and type-check
+deno fmt --check .   # Format check
+deno lint .          # Lint
+deno check main.ts   # Type-check
+deno task update     # Update Fresh framework
+```
+
+## Docker
+
+Multi-stage build with non-root user and health check:
+
+```
+docker build -f confs/Dockerfile -t echelon-analytics .
+docker run -p 1947:1947 -v echelon-data:/app/data echelon-analytics
+```
+
+The container exposes port 1947. Mount a volume at /app/data/ for the SQLite database.
+
+- Base image: denoland/deno:2.7.1
+- Uses tini for proper PID 1 signal handling
+- Non-root user echelon (UID 1001)
+- Health check: GET /api/health every 30s
+
+## Reverse Proxy (Caddy)
+
+```
+echelon.example.com {
+    reverse_proxy localhost:1947
+}
+```
+
+## Reverse Proxy (Nginx)
+
+```
+server {
+    server_name echelon.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:1947;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Set ECHELON_TRUST_PROXY=true when behind a reverse proxy.
+
+## Cloudflare
+
+```
+ECHELON_BEHIND_CLOUDFLARE=true
+ECHELON_TRUST_PROXY=true
+```
+
+## Authentication Setup
+
+### API Token
+
+```
+ECHELON_SECRET=your-secret-token-here
+```
+
+Use with Authorization: Bearer your-secret-token-here header.
+
+### Username/Password
+
+```
+cd echelon-analytics
+deno eval "import{hashPassword}from'./lib/auth.ts';console.log(await hashPassword('yourpassword'))"
+
+ECHELON_USERNAME=admin
+ECHELON_PASSWORD_HASH=pbkdf2$600000$<salt>$<hash>
+```
+
+Both auth modes can be used simultaneously.
+
+## Single-Process Constraint
+
+All state is in memory (sessions, rate limiter, burst maps, buffered writers). Must run with a single Deno worker — do not use --parallel with deno serve.
+
+---
+
+# Features
+
+## Script Tag
+
+```html
+<script async src="https://your-host/ea.js" data-site="my-site"></script>
+```
+
+## Script Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| data-site | Site identifier. Defaults to "default" if omitted. |
+| data-cookie | Enable returning-visitor cookie. With ECHELON_COOKIE_CONSENT=true, shows consent banner first. |
+| data-clicks | Track clicks on elements with data-echelon-click attribute. |
+| data-scroll | Track scroll depth milestones (25%, 50%, 75%, 90%, 100%). |
+| data-hover | Track 1-second hovers on elements with data-echelon-hover attribute. |
+| data-outbound | Track clicks on outbound links (different origin). |
+| data-downloads | Track clicks on file download links (pdf, zip, dmg, mp3, mp4, etc.). |
+| data-forms | Track form submission events. |
+| data-vitals | Track Core Web Vitals: LCP, CLS, INP. |
+
+### Enable Everything
+
+```html
+<script async src="https://your-host/ea.js"
+  data-site="my-site"
+  data-cookie
+  data-clicks
+  data-scroll
+  data-hover
+  data-outbound
+  data-downloads
+  data-forms
+  data-vitals></script>
+```
+
+## HTML Element Markup
+
+### Click Tracking (requires data-clicks)
+
+```html
+<button data-echelon-click="signup-cta">Sign Up</button>
+```
+
+### Hover Tracking (requires data-hover, fires after 1s)
+
+```html
+<div data-echelon-hover="pricing-card">...</div>
+```
+
+### Form Tracking (requires data-forms)
+
+```html
+<form data-echelon-form="contact-form">...</form>
+```
+
+### Custom Data Attributes
+
+Any data-echelon-* attribute on annotated elements is included in event data (max 8 keys, max 256 chars per value).
+
+```html
+<button data-echelon-click="buy"
+  data-echelon-product="widget"
+  data-echelon-price="9.99">Buy Now</button>
+```
+
+## JavaScript API
+
+```js
+window.echelon.track("event_name", {
+  key: "value",
+  another: "prop"
+});
+```
+
+Limits: max 16 properties, key max 64 chars, value max 512 chars.
+
+## Auto-Tracked Events
+
+| Event | Trigger |
+|-------|---------|
+| pageview | Via /b.gif beacon after first user interaction (pointer, scroll, click, keydown) or on visibility change after 4 seconds. Minimum 800ms interaction delay. |
+| bounce | No interaction within 120 seconds, or tab hidden without prior interaction. |
+| session_end | Tab becomes hidden. |
+| session_resume | Tab becomes visible again after session_end. |
+
+## SPA Support
+
+The tracker automatically patches pushState, replaceState, and listens for popstate events. When the route changes, a new pageview beacon fires automatically. Works with React Router, Vue Router, SvelteKit, Fresh, or any other SPA framework.
+
+## UTM Campaign Tracking
+
+UTM parameters are automatically extracted from the URL and persisted in sessionStorage:
+
+- utm_campaign
+- utm_source
+- utm_medium
+- utm_content
+- utm_term
+
+All tracked events within the session inherit UTM parameters.
+
+## A/B Experiments
+
+Create experiments via the admin dashboard or API. Variants are allocated based on weight. The tracker automatically picks up experiment assignments and includes experiment_id and variant_id in all events.
+
+## Cookieless by Default
+
+Without data-cookie, visitors are identified by a daily-rotating HMAC-SHA256 hash of IP + User-Agent + site ID + date. This produces a 16-character hex identifier that:
+
+- Resets every day — no cross-day tracking
+- Cannot be reversed to recover the original IP
+- Requires no cookie consent (GDPR/ePrivacy compliant)
+
+Add data-cookie to enable a persistent visitor cookie for returning visitor tracking.
+
+## Admin Dashboard
+
+- Overview with KPIs, daily trends, top pages, devices, countries, referrers
+- Realtime visitor monitoring (10-second polling)
+- Bot management — suspicious visitors, exclude/include controls
+- A/B experiments — create, manage, view conversion uplift
+- UTM campaigns — track and break down by source, medium, content
+- Performance metrics — CI/CD benchmark tracking with trends
+
+---
+
+# API Reference
+
+## Authentication
+
+All API endpoints (except /api/health) require one of:
+
+- Bearer token: Authorization: Bearer <ECHELON_SECRET>
+- Session cookie: echelon_session from password login
+
+Cookie-authenticated POST/PATCH/DELETE requests require CSRF validation (Origin or Referer header must match the server host).
+
+## Public Endpoints
+
+GET /ea.js — Returns the tracker script with embedded WASM proof-of-work challenge.
+GET /b.gif — Pageview beacon. Returns a 1x1 transparent GIF.
+POST /e — Behavioral events endpoint (via sendBeacon). Max 16 KB body, max 20 events per request. Returns 204.
+GET /api/health — Returns { "status": "ok", "service": "Echelon Analytics" }.
+
+## Stats
+
+GET /api/stats/overview?site_id=X&days=N — Overview statistics. days defaults to 30 (max 730).
+GET /api/stats/realtime?site_id=X — Active visitors in last 5 minutes.
+GET /api/stats/summary — Summary across all sites.
+GET /api/stats/vitals — Live system vitals: buffer sizes and 24h aggregates.
+GET /api/stats/campaigns?days=N — Campaign statistics. Optional id param for breakdown.
+GET /api/stats/experiments?experiment_id=X — Experiment statistics with significance testing.
+
+## Campaigns
+
+GET /api/campaigns — List all UTM campaigns.
+POST /api/campaigns — Create campaign. Body: { id, name, utm_campaign, site_id }. Returns 201.
+PATCH /api/campaigns/:id — Update status: "active" | "paused" | "archived".
+DELETE /api/campaigns/:id — Delete campaign.
+
+## Experiments
+
+GET /api/experiments — List all A/B experiments with variants.
+POST /api/experiments — Create experiment. Body: { experiment_id, name, metric_event_type, variants: [...] }. Returns 201.
+PATCH /api/experiments/:id — Update status: "draft" | "active" | "paused" | "completed" | "archived".
+
+## Bot Management
+
+GET /api/bots/suspicious?site_id=X&min_score=25&limit=50 — List suspicious visitors.
+GET /api/bots/excluded — List excluded visitors.
+POST /api/bots/exclude — Exclude visitor. Body: { visitor_id, label }. Returns 201.
+DELETE /api/bots/exclude/:id — Remove exclusion.
+GET /api/bots/visitor/:id — Detailed visitor data (last 100 views and events).
+
+## Performance Metrics
+
+GET /api/perf?category=X&metric=X&limit=100&since=ISO8601 — Query metrics.
+POST /api/perf — Ingest metrics. Body: [{ category, metric, value, unit }].
+GET /api/perf/trends?limit=30&since=ISO8601 — Performance trends.
+
+## Sites
+
+GET /api/sites/:id — Get site settings (consent CSS).
+PATCH /api/sites/:id — Update site consent CSS (max 4096 chars).
+
+## Data Ingest
+
+POST /api/ingest — Bulk ingest visitor views and events. Max 1 MB body.
+
+## Error Codes
+
+400 — Missing or invalid parameters
+401 — Unauthorized
+404 — Resource not found
+409 — Conflict (duplicate resource)
+413 — Request body too large
+429 — Rate limited
+
+---
+
+# Bot Defense
+
+## Overview
+
+Every incoming request is scored from 0 (definitely human) to 100 (definitely bot). Views and events with bot_score >= 50 are excluded from daily rollups. Known bot User-Agents are dropped entirely before scoring.
+
+## Known Bot UA Filter
+
+Requests matching any pattern in ECHELON_BOT_UA_PATTERNS are dropped before scoring. Default list includes:
+
+- Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot
+- GPTBot, ClaudeBot, ChatGPT-User, Google-Extended
+- curl, wget, python-requests, HeadlessChrome, Puppeteer, Playwright
+
+## Bot Scoring Factors
+
+| Signal | Condition | Points |
+|--------|-----------|--------|
+| CF verified bot | Cloudflare confirms known bot UA | +15 |
+| CF bot score <= 2 | Very confident bot | +50 |
+| CF bot score 3-29 | Likely automated | +30 |
+| CF bot score 30-50 | Uncertain | +10 |
+| Interaction < 850ms | Beacon fired too fast | +20 |
+| Interaction 850-1000ms | Suspiciously fast | +8 |
+| Suspect country | IP in ECHELON_SUSPECT_COUNTRIES | +30 |
+| Per-site suspect country | IP in ECHELON_SITE_SUSPECT_COUNTRIES | +30 (stacks) |
+| Burst detection | > 15 requests in 5-min window | +25 |
+| Missing Accept-Language | No header present | +10 |
+| Missing Sec-CH-UA + Sec-Fetch-Site | Both headers absent | +10 |
+| Unrealistic screen | Width/height <= 0 or > 10000 | +10 |
+| No referrer + deep path | Direct visit to path with >= 2 segments | +5 |
+| PoW token missing | No proof-of-work token sent | +15 |
+| PoW token invalid | Token fails verification | +25 |
+
+Score is capped at 100.
+
+## Proof-of-Work System
+
+Every request for /ea.js embeds a WebAssembly blob and a challenge string. The browser must solve the challenge before sending beacons.
+
+- A WASM module is generated from a 64-byte random seed every 6 hours
+- Implements a SipHash-inspired algorithm with randomized constants
+- Challenge string rotates every minute (HMAC-SHA256 of minute bucket)
+- Client computes: token = wasm.solve(challenge + ":" + sessionId + ":" + siteId)
+- Token is a 32-character hex string
+- Cached in sessionStorage, re-solved on 10% of requests
+- WASM solve is awaited up to 150ms before sending the beacon
+
+Server verification tries all combinations of:
+
+- Current + previous WASM slots (covers 6-hour rotation)
+- Last N minute buckets (configurable via ECHELON_CHALLENGE_WINDOW_MINUTES, default 10)
+
+Returns "valid", "missing", or "invalid" — each adding different penalty points.
+
+## Burst Detection
+
+- Window: 5 minutes per IP
+- Threshold: 15 requests triggers +25 penalty
+- Map size: max 100,000 entries (pruned when exceeded)
+
+## Rate Limiting
+
+Tracking endpoints (/b.gif, /e) are rate-limited per IP:
+
+- Default: 100 requests per 60-second window
+- Configurable via ECHELON_RATE_LIMIT_MAX and ECHELON_RATE_LIMIT_WINDOW_MS
+
+## Cloudflare Integration
+
+Set ECHELON_BEHIND_CLOUDFLARE=true to enable:
+
+- Read cf-ipcountry for geo data (ignores XX and T1)
+- Read Cloudflare bot score from cf-bot-score header
+- Detect CF-verified bots
+- Use cf-connecting-ip for real client IP
+
+## Referrer Classification
+
+| Type | Domains |
+|------|---------|
+| ai | perplexity.ai, chat.openai.com, chatgpt.com, claude.ai, you.com, phind.com, copilot.microsoft.com, gemini.google.com, poe.com |
+| search | Google (22 TLDs), bing.com, yahoo.com, duckduckgo.com, yandex.com/ru, ecosia.org |
+| social | facebook.com, twitter.com, x.com, reddit.com, linkedin.com, instagram.com, t.co |
+| direct_or_unknown | Everything else |
+
+## Manual Exclusion
+
+POST /api/bots/exclude — { "visitor_id": "abc123", "label": "Known bot" }
+DELETE /api/bots/exclude/abc123 — Re-include visitor
+
+## Discard Threshold
+
+Set ECHELON_BOT_DISCARD_THRESHOLD to a score (e.g., 80) to discard high-score requests before storage. Default is 0 (store all, filter at rollup time).
+
+---
+
+# Configuration
+
+## Core
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_PORT | 1947 | HTTP listen port |
+| ECHELON_DB_PATH | ./echelon.db | Path to SQLite database file |
+| ECHELON_SECRET | (empty) | Bearer token for API auth. If unset, PoW tokens won't survive restarts |
+| ECHELON_RETENTION_DAYS | 90 | Days to keep raw visitor_views and semantic_events |
+
+## Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_USERNAME | (empty) | Username for password-based login |
+| ECHELON_PASSWORD_HASH | (empty) | PBKDF2 hash (pbkdf2$600000$<salt>$<hash>) |
+
+Generate a password hash:
+
+```
+deno eval "import{hashPassword}from'./lib/auth.ts';console.log(await hashPassword('yourpassword'))"
+```
+
+## Bot Defense
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_SUSPECT_COUNTRIES | CN | Comma-separated ISO-2 codes that add penalty points |
+| ECHELON_SUSPECT_POINTS | 30 | Points added per suspect country match |
+| ECHELON_SITE_SUSPECT_COUNTRIES | (empty) | Per-site suspect countries: site:CC,CC;site:CC |
+| ECHELON_BOT_DISCARD_THRESHOLD | 0 | Scores >= this are discarded before storage. 0 = store all |
+| ECHELON_BOT_UA_PATTERNS | (long list) | Comma-separated UA substrings to drop entirely |
+| ECHELON_CHALLENGE_WINDOW_MINUTES | 10 | Minutes of past PoW challenges accepted as valid |
+
+## Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_RATE_LIMIT_MAX | 100 | Max requests per IP per window |
+| ECHELON_RATE_LIMIT_WINDOW_MS | 60000 | Rate limit window in milliseconds |
+
+## Buffered Writes
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_VIEW_FLUSH_MS | 15000 | Flush interval for pageview buffer (ms) |
+| ECHELON_EVENT_FLUSH_MS | 10000 | Flush interval for event buffer (ms) |
+
+## Network & Proxy
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_TRUST_PROXY | false | Trust X-Forwarded-For / X-Real-IP for client IP |
+| ECHELON_BEHIND_CLOUDFLARE | false | Trust Cloudflare headers (cf-*) for geo and bot data |
+| ECHELON_TRUST_GEO_HEADERS | false | Trust cloudfront-viewer-country / x-country-code |
+| ECHELON_ALLOWED_ORIGINS | (empty) | Comma-separated domains allowed to load the tracker. Empty = all |
+
+## Miscellaneous
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ECHELON_COOKIE_CONSENT | false | Show consent banner before setting visitor cookie |
+| ECHELON_IGNORED_SITES | (empty) | Comma-separated site IDs to silently ignore. "smoke-test" always ignored |
+
+## Example .env
+
+```
+ECHELON_PORT=1947
+ECHELON_DB_PATH=./data/echelon.db
+ECHELON_SECRET=change-me-to-a-secure-random-string
+ECHELON_RETENTION_DAYS=90
+ECHELON_USERNAME=admin
+ECHELON_PASSWORD_HASH=pbkdf2$600000$...
+ECHELON_TRUST_PROXY=true
+ECHELON_BEHIND_CLOUDFLARE=true
+ECHELON_SUSPECT_COUNTRIES=CN
+ECHELON_SUSPECT_POINTS=30
+ECHELON_RATE_LIMIT_MAX=100
+```
+
+---
+
+# Architecture
+
+## Overview
+
+Echelon Analytics is a Deno + Fresh application backed by a single SQLite database. All state — sessions, rate limiter, burst maps, buffered writers — lives in memory. Runs as a single process.
+
+## Tech Stack
+
+- Runtime: Deno 2.x
+- Framework: Fresh 2.2.0 (file-system routing, Preact islands)
+- Build: Vite 7
+- CSS: Tailwind CSS v4
+- UI: Preact + @preact/signals
+- Database: SQLite via node:sqlite (WAL mode)
+- Container: Docker (multi-stage, non-root, tini)
+
+## Request Flow
+
+1. Browser fetches /ea.js → dynamically-generated tracker with embedded WASM blob (rotates every 6h) and per-minute challenge string.
+2. Tracker initializes: session ID from sessionStorage, UTM params from URL, starts WASM solver, attaches interaction listeners, 800ms minimum gate.
+3. On user interaction → loads /b.gif with query params (path, site, session, PoW token, screen, UTM, referrer).
+4. Server: rate limit check → bot UA filter → visitor identity (HMAC hash or cookie) → bot scoring (0-100) → PoW verification → data enrichment (geo, device, OS, referrer) → push to BufferedWriter.
+5. BufferedWriter batches up to 50k records, flushes to SQLite every 10-15s in a single transaction.
+6. Behavioral events (scroll, clicks, bounces, sessions, vitals, custom) sent via sendBeacon to POST /e → same pipeline, separate writer.
+
+## Database
+
+SQLite with WAL mode. PRAGMAs: journal_mode=WAL, synchronous=NORMAL, busy_timeout=5000, foreign_keys=ON.
+
+### Core Tables
+
+- visitor_views: Raw pageviews with bot scores, device, OS, country, referrer, UTM. Retention: 90 days.
+- visitor_views_daily: Rollup aggregates (filtered: bot_score < 50, not excluded). Retention: 730 days. Composite PK: (site_id, date, device_type, country_code, is_returning).
+- semantic_events: Behavioral events with experiment/campaign linkage. Retention: 90 days.
+
+### Supporting Tables
+
+- excluded_visitors: Manual bot exclusion list.
+- experiments / experiment_variants: A/B experiment definitions.
+- utm_campaigns: Campaign tracking.
+- site_settings: Per-site consent CSS.
+- perf_metrics: CI/CD performance tracking.
+- maintenance_log: Rollup status tracking.
+
+## Data Pipeline
+
+### Buffered Writers
+
+Two BufferedWriter<T> instances:
+- viewWriter: visitor_views, 15s flush, 50k max buffer.
+- eventWriter: semantic_events, 10s flush, 50k max buffer.
+
+Failed flushes re-add records to buffer. Graceful shutdown flushes remaining buffers.
+
+### Daily Rollup (03:00 UTC)
+
+1. Aggregate yesterday's visitor_views into visitor_views_daily.
+2. Filter: bot_score >= 50 excluded, excluded_visitors removed.
+3. Group by: site, date, device type, country, returning status.
+4. INSERT OR REPLACE (idempotent on composite PK).
+5. Purge expired data (90 days raw, 730 days rollup).
+6. PRAGMA incremental_vacuum(100).
+
+## Visitor Identity
+
+- Cookieless (default): HMAC-SHA256(IP + UA + siteId + date) → 16-char hex. Resets daily.
+- Cookie (opt-in): HttpOnly _ev cookie, 16-char hex, 30-day TTL. Enabled with data-cookie.
+
+## Authentication
+
+- Bearer token: ECHELON_SECRET env var, constant-time comparison.
+- Password: PBKDF2-SHA256, 600k iterations, 256-bit key, 128-bit salt. Web Crypto API only.
+- Sessions: In-memory, random UUID tokens, 24h TTL, pruned every 30 minutes.
+- CSRF: Mutating requests with cookie auth require matching Origin/Referer header.
+
+## Directory Structure
+
+```
+echelon-analytics/
+  main.ts                  Entry point, graceful shutdown
+  lib/
+    tracker.ts             Tracker script generation
+    beacon.ts              Pageview beacon handler
+    events-endpoint.ts     Event handler
+    bot-score.ts           Bot scoring heuristics
+    challenge.ts           PoW challenge management
+    challenge-wasm.ts      WASM bytecode builder
+    buffered-writer.ts     Generic batch writer
+    auth.ts                PBKDF2 hashing
+    session.ts             In-memory sessions
+    config.ts              Env var centralization
+    maintenance.ts         Daily rollup and purge
+    stats.ts               Stats queries
+    rate-limit.ts          Per-IP rate limiter
+    db/
+      adapter.ts           Database interface
+      sqlite-adapter.ts    SQLite implementation
+      database.ts          Init, migrations, singleton
+      schema.ts            DDL and indexes
+  routes/
+    ea.js.ts               GET /ea.js
+    b.gif.ts               GET /b.gif
+    e.ts                   POST /e
+    _middleware.ts          CORS, security headers
+    api/                   REST API routes
+    admin/                 Admin UI routes
+  islands/                 Preact interactive components
+  components/              Server-only Preact components
+```
+
+---
+
+Source: https://github.com/janit/ea
+License: AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen

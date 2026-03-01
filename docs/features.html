@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features — ea.js Echelon Analytics</title>
+<meta name="description" content="Tracking features: pageviews, scroll depth, clicks, outbound links, downloads, forms, Core Web Vitals, UTM campaigns, A/B experiments. Cookieless by default, SPA-aware.">
+<link rel="canonical" href="https://ea.js.org/features.html">
+<link rel="icon" href="favicon.ico">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ea.js — Echelon Analytics">
+<meta property="og:title" content="Features — ea.js Echelon Analytics">
+<meta property="og:description" content="Tracking features: pageviews, scroll depth, clicks, outbound links, downloads, forms, Core Web Vitals, UTM campaigns, A/B experiments.">
+<meta property="og:url" content="https://ea.js.org/features.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Features — ea.js Echelon Analytics">
+<meta name="twitter:description" content="Tracking features: pageviews, scroll depth, clicks, outbound links, downloads, forms, Core Web Vitals, UTM campaigns, A/B experiments.">
+<link rel="stylesheet" href="css/style.css">
+<script async src="https://ea.islets.app/ea.js" data-site="echelon-analytics" data-cookie></script>
+</head>
+<body>
+<nav><a href="index.html">ea.js</a> <span class="sep">/</span> <a href="features.html">features</a></nav>
+<main>
+<h1>&gt; Features</h1>
+<p class="tagline">Tracking features, script tag options, JS API, and SPA support.</p>
+
+<hr>
+
+<h2>Script Tag</h2>
+<p>Basic embed — add to any HTML page:</p>
+<pre>&lt;script async src="https://your-host/ea.js" data-site="my-site"&gt;&lt;/script&gt;</pre>
+
+<h2>Script Attributes</h2>
+<table>
+<tr><th>Attribute</th><th>Description</th></tr>
+<tr><td><code>data-site</code></td><td>Site identifier. Defaults to <code>"default"</code> if omitted.</td></tr>
+<tr><td><code>data-cookie</code></td><td>Enable returning-visitor cookie. With <code>ECHELON_COOKIE_CONSENT=true</code>, shows consent banner first.</td></tr>
+<tr><td><code>data-clicks</code></td><td>Track clicks on elements with <code>data-echelon-click</code> attribute.</td></tr>
+<tr><td><code>data-scroll</code></td><td>Track scroll depth milestones (25%, 50%, 75%, 90%, 100%).</td></tr>
+<tr><td><code>data-hover</code></td><td>Track 1-second hovers on elements with <code>data-echelon-hover</code> attribute.</td></tr>
+<tr><td><code>data-outbound</code></td><td>Track clicks on outbound links (different origin).</td></tr>
+<tr><td><code>data-downloads</code></td><td>Track clicks on file download links (pdf, zip, dmg, mp3, mp4, etc.).</td></tr>
+<tr><td><code>data-forms</code></td><td>Track form submission events.</td></tr>
+<tr><td><code>data-vitals</code></td><td>Track Core Web Vitals: LCP, CLS, INP.</td></tr>
+</table>
+
+<h3>Enable Everything</h3>
+<pre>&lt;script async src="https://your-host/ea.js"
+  data-site="my-site"
+  data-cookie
+  data-clicks
+  data-scroll
+  data-hover
+  data-outbound
+  data-downloads
+  data-forms
+  data-vitals&gt;&lt;/script&gt;</pre>
+
+<h2>HTML Element Markup</h2>
+<p>Annotate elements to track specific interactions:</p>
+
+<h3>Click Tracking</h3>
+<p>Requires <code>data-clicks</code> on the script tag.</p>
+<pre>&lt;button data-echelon-click="signup-cta"&gt;Sign Up&lt;/button&gt;</pre>
+
+<h3>Hover Tracking</h3>
+<p>Requires <code>data-hover</code> on the script tag. Fires after 1 second of hover.</p>
+<pre>&lt;div data-echelon-hover="pricing-card"&gt;...&lt;/div&gt;</pre>
+
+<h3>Form Tracking</h3>
+<p>Requires <code>data-forms</code> on the script tag.</p>
+<pre>&lt;form data-echelon-form="contact-form"&gt;...&lt;/form&gt;</pre>
+
+<h3>Custom Data Attributes</h3>
+<p>Any <code>data-echelon-*</code> attribute on annotated elements is included in event data (max 8 keys, max 256 chars per value).</p>
+<pre>&lt;button data-echelon-click="buy"
+  data-echelon-product="widget"
+  data-echelon-price="9.99"&gt;Buy Now&lt;/button&gt;</pre>
+
+<h2>JavaScript API</h2>
+<p>Send custom events programmatically:</p>
+<pre>window.echelon.track("event_name", {
+  key: "value",
+  another: "prop"
+});</pre>
+<p>Limits: max 16 properties, key max 64 chars, value max 512 chars.</p>
+
+<h2>Auto-Tracked Events</h2>
+<p>These fire automatically — no configuration needed:</p>
+<table>
+<tr><th>Event</th><th>Trigger</th></tr>
+<tr><td><code>pageview</code></td><td>Via <code>/b.gif</code> beacon after first user interaction (pointer, scroll, click, keydown) or on visibility change after 4 seconds. Minimum 800ms interaction delay.</td></tr>
+<tr><td><code>bounce</code></td><td>No interaction within 120 seconds, or tab hidden without prior interaction.</td></tr>
+<tr><td><code>session_end</code></td><td>Tab becomes hidden.</td></tr>
+<tr><td><code>session_resume</code></td><td>Tab becomes visible again after <code>session_end</code>.</td></tr>
+</table>
+
+<h2>SPA Support</h2>
+<p>The tracker automatically patches <code>pushState</code>, <code>replaceState</code>, and listens for <code>popstate</code> events. When the route changes, a new pageview beacon fires automatically. No configuration needed for React Router, Vue Router, SvelteKit, Fresh, or any other SPA framework.</p>
+
+<h2>UTM Campaign Tracking</h2>
+<p>UTM parameters are automatically extracted from the URL and persisted in <code>sessionStorage</code> for the session duration:</p>
+<ul>
+<li><code>utm_campaign</code></li>
+<li><code>utm_source</code></li>
+<li><code>utm_medium</code></li>
+<li><code>utm_content</code></li>
+<li><code>utm_term</code></li>
+</ul>
+<p>All tracked events within the session inherit UTM parameters.</p>
+
+<h2>A/B Experiments</h2>
+<p>Create experiments via the admin dashboard or API. Variants are allocated based on weight. The tracker script automatically picks up experiment assignments and includes <code>experiment_id</code> and <code>variant_id</code> in all events.</p>
+
+<h2>Cookieless by Default</h2>
+<p>Without <code>data-cookie</code>, visitors are identified by a daily-rotating HMAC-SHA256 hash of IP + User-Agent + site ID + date. This produces a 16-character hex identifier that:</p>
+<ul>
+<li>Resets every day — no cross-day tracking</li>
+<li>Cannot be reversed to recover the original IP</li>
+<li>Requires no cookie consent (GDPR/ePrivacy compliant)</li>
+</ul>
+<p>Add <code>data-cookie</code> to enable a persistent visitor cookie for returning visitor tracking.</p>
+
+<h2>Admin Dashboard</h2>
+<ul>
+<li>Overview with KPIs, daily trends, top pages, devices, countries, referrers</li>
+<li>Realtime visitor monitoring (10-second polling)</li>
+<li>Bot management — suspicious visitors, exclude/include controls</li>
+<li>A/B experiments — create, manage, view conversion uplift</li>
+<li>UTM campaigns — track and break down by source, medium, content</li>
+<li>Performance metrics — CI/CD benchmark tracking with trends</li>
+</ul>
+
+<hr>
+<div class="doc-nav">
+<a href="installation.html">Installation</a>
+<a href="api.html">API Reference</a>
+<a href="bot-defense.html">Bot Defense</a>
+<a href="configuration.html">Configuration</a>
+<a href="architecture.html">Architecture</a>
+</div>
+<p class="footer">AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen</p>
+</main>
+</body>
+</html>

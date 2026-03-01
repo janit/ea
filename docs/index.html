@@ -3,97 +3,38 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ea.js — Echelon Analytics</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: #0a0a0a;
-  color: #33ff33;
-  font-family: "Courier New", Courier, monospace;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-main {
-  max-width: 640px;
-  padding: 2rem;
-}
-h1 {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-}
-h1 span { color: #1a9a1a; }
-.tagline {
-  color: #1a9a1a;
-  font-size: 0.9rem;
-  margin-bottom: 1.5rem;
-}
-h2 {
-  font-size: 1rem;
-  margin-top: 1.5rem;
-  margin-bottom: 0.5rem;
-  color: #33ff33;
-}
-h2::before { content: "## "; color: #1a9a1a; }
-p, li {
-  color: #1a9a1a;
-  font-size: 0.85rem;
-  line-height: 1.7;
-}
-ul {
-  list-style: none;
-  padding: 0;
-}
-li::before {
-  content: "- ";
-  color: #33ff33;
-}
-code {
-  color: #33ff33;
-  background: #111;
-  padding: 0.1em 0.3em;
-}
-pre {
-  background: #111;
-  border: 1px solid #1a3a1a;
-  padding: 0.8rem;
-  margin: 0.5rem 0;
-  overflow-x: auto;
-  font-size: 0.8rem;
-  color: #33ff33;
-}
-a { color: #33ff33; }
-a:hover { color: #66ff66; }
-.cursor {
-  display: inline-block;
-  width: 0.6em;
-  height: 1.1em;
-  background: #33ff33;
-  vertical-align: text-bottom;
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  50% { opacity: 0; }
-}
-hr {
-  border: none;
-  border-top: 1px solid #1a3a1a;
-  margin: 1.5rem 0;
-}
-.footer {
-  margin-top: 2rem;
-  font-size: 0.75rem;
-  color: #1a5a1a;
-}
-</style>
+<title>ea.js — Privacy-First Web Analytics with WASM Bot Defense</title>
+<meta name="description" content="Self-hosted, cookieless web analytics with WebAssembly proof-of-work bot defense. Single script tag, single SQLite database. No cookie banners needed. AGPL-3.0.">
+<link rel="canonical" href="https://ea.js.org/">
+<link rel="icon" href="favicon.ico">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ea.js — Echelon Analytics">
+<meta property="og:title" content="ea.js — Privacy-First Web Analytics with WASM Bot Defense">
+<meta property="og:description" content="Self-hosted, cookieless web analytics with WebAssembly proof-of-work bot defense. Single script tag, single SQLite database. No cookie banners needed.">
+<meta property="og:url" content="https://ea.js.org/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ea.js — Privacy-First Web Analytics with WASM Bot Defense">
+<meta name="twitter:description" content="Self-hosted, cookieless web analytics with WebAssembly proof-of-work bot defense. Single script tag, single SQLite database.">
+<link rel="stylesheet" href="css/style.css">
 <script async src="https://ea.islets.app/ea.js" data-site="echelon-analytics" data-cookie></script>
 </head>
 <body>
 <main>
 <h1>&gt; ea.js <span>— Echelon Analytics</span></h1>
-<p class="tagline">Privacy-first, self-hosted web analytics.<br>
-Drop in a single script tag — no cookie banners needed.<span class="cursor"></span></p>
+<p class="tagline">Privacy-first, self-hosted web analytics with WebAssembly proof-of-work bot defense.<br>
+Drop in a single script tag — clean data, no cookie banners, no bot spam.<span class="cursor"></span></p>
+
+<hr>
+
+<h2>Documentation</h2>
+<div class="doc-nav">
+<a href="installation.html">Installation</a>
+<a href="features.html">Features</a>
+<a href="api.html">API Reference</a>
+<a href="bot-defense.html">Bot Defense</a>
+<a href="configuration.html">Configuration</a>
+<a href="architecture.html">Architecture</a>
+</div>
 
 <hr>
 
@@ -104,9 +45,22 @@ So I built my own for <a href="https://afroute.com">afroute.com</a> and ripped i
 implementing <a href="https://islets.app">Islets Spatial CMS</a>.</p>
 
 <h2>Quick Start</h2>
-<pre>ECHELON_DB_PATH=./echelon.db deno run -A main.ts</pre>
+<pre>cd echelon-analytics
+deno task dev</pre>
 <pre>&lt;script src="https://your-host/ea.js" data-site="my-site"&gt;&lt;/script&gt;</pre>
 <p>That's it. Pageviews, bounces, and sessions tracked automatically.</p>
+
+<h2>WASM Proof-of-Work Bot Defense</h2>
+<p>Analytics tools are plagued by bot traffic that distorts your data. ea.js solves this with a novel approach: every tracker script embeds a <strong>runtime-generated WebAssembly module</strong> that browsers must solve before pageviews are accepted.</p>
+<ul>
+<li>WASM blob is regenerated from a random seed every <strong>6 hours</strong> — each deployment produces unique bytecode</li>
+<li>SipHash-inspired algorithm with randomized constants — bot toolkits can't pre-compute solutions</li>
+<li>Per-minute challenge rotation via HMAC-SHA256</li>
+<li>Invisible to users — solves in &lt;150ms in any modern browser</li>
+<li>Missing or invalid tokens add penalty points to the visitor's bot score (0–100)</li>
+<li>Combined with heuristic scoring, Cloudflare integration, burst detection, and UA blocklists</li>
+</ul>
+<p>The result: <strong>clean analytics data</strong> without CAPTCHAs, JavaScript challenges, or third-party bot detection services. <a href="bot-defense.html">Full bot defense documentation &rarr;</a></p>
 
 <h2>How It Works</h2>
 <ul>
@@ -114,25 +68,61 @@ implementing <a href="https://islets.app">Islets Spatial CMS</a>.</p>
 <li>Cookieless by default — daily-rotating HMAC hash, no cross-day tracking</li>
 <li>No cookie consent banners needed (GDPR/ePrivacy compliant)</li>
 <li>Optional persistent cookies via <code>data-cookie</code></li>
+<li>SPA-aware — patches <code>pushState</code>/<code>replaceState</code> for automatic route tracking</li>
 <li>SQLite with WAL mode — single file, zero config</li>
 </ul>
 
-<h2>Features</h2>
+<h2>Tracking Features</h2>
 <ul>
 <li>Auto-tracked pageviews, bounces, sessions</li>
-<li>Click, scroll depth, and hover tracking</li>
-<li>Bot detection with heuristic scoring (0-100)</li>
-<li>A/B experiment tracking</li>
-<li>Admin dashboard with realtime visitors</li>
-<li>REST API for stats, bot management, experiments</li>
+<li>Click, scroll depth, hover, outbound link, and file download tracking</li>
+<li>Core Web Vitals (LCP, CLS, INP) via <code>data-vitals</code></li>
+<li>Form submission tracking via <code>data-forms</code></li>
+<li>Custom events: <code>window.echelon.track("name", { key: "value" })</code></li>
+<li>UTM campaign tracking with source/medium/content/term breakdown</li>
+<li>A/B experiment tracking with variant allocation and significance testing</li>
+</ul>
+
+<h2>Bot Defense</h2>
+<ul>
+<li>Heuristic scoring (0–100) — interaction timing, headers, geo, burst detection</li>
+<li>Dynamic WASM proof-of-work — randomized every 6 hours, embedded in tracker</li>
+<li>Cloudflare bot score integration when deployed behind CF</li>
+<li>Known bot UA blocklist (Googlebot, GPTBot, ClaudeBot, curl, etc.)</li>
+<li>AI referrer classification (ChatGPT, Claude, Perplexity, Gemini)</li>
+<li>Per-IP rate limiting on tracking endpoints</li>
+</ul>
+
+<h2>Admin Dashboard</h2>
+<ul>
+<li>Overview with KPIs, daily trends, top pages, devices, countries, referrers</li>
+<li>Realtime visitor monitoring (10-second polling)</li>
+<li>Bot management — suspicious visitors, exclude/include controls</li>
+<li>A/B experiments — create, manage, view conversion uplift</li>
+<li>UTM campaigns — track and break down by source, medium, content</li>
+<li>Performance metrics — CI/CD benchmark tracking with trends</li>
+<li>REST API for all dashboard data</li>
+</ul>
+
+<h2>Auth</h2>
+<ul>
+<li>Bearer token (<code>ECHELON_SECRET</code>) for API access</li>
+<li>Username + password login (PBKDF2-SHA256, 600k iterations)</li>
+<li>24-hour session cookies with CSRF protection</li>
 </ul>
 
 <h2>Tech Stack</h2>
 <ul>
-<li>Deno + Fresh 2.2.0 (Preact)</li>
-<li>SQLite via <code>@db/sqlite</code></li>
-<li>Preact islands + <code>@preact/signals</code></li>
+<li>Deno + Fresh 2.2.0 (Preact islands)</li>
+<li>SQLite via Deno's built-in <code>node:sqlite</code></li>
+<li>Preact + <code>@preact/signals</code>, Tailwind CSS v4</li>
+<li>Vite 7 build pipeline</li>
+<li>Docker-ready (multi-stage, non-root, health check)</li>
 </ul>
+
+<h2>Docker</h2>
+<pre>docker build -f confs/Dockerfile -t echelon .
+docker run -p 1947:1947 -v echelon-data:/app/data echelon</pre>
 
 <hr>
 

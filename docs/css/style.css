@@ -1,0 +1,159 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #33ff33;
+  font-family: "Courier New", Courier, monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+main {
+  max-width: 720px;
+  width: 100%;
+  padding: 2rem;
+  flex: 1;
+}
+h1 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+h1 span { color: #1a9a1a; }
+.tagline {
+  color: #1a9a1a;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+h2 {
+  font-size: 1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: #33ff33;
+}
+h2::before { content: "## "; color: #1a9a1a; }
+h3 {
+  font-size: 0.9rem;
+  margin-top: 1.2rem;
+  margin-bottom: 0.4rem;
+  color: #33ff33;
+}
+h3::before { content: "### "; color: #1a9a1a; }
+p, li {
+  color: #1a9a1a;
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+ul, ol {
+  list-style: none;
+  padding: 0;
+}
+li::before {
+  content: "- ";
+  color: #33ff33;
+}
+code {
+  color: #33ff33;
+  background: #111;
+  padding: 0.1em 0.3em;
+}
+pre {
+  background: #111;
+  border: 1px solid #1a3a1a;
+  padding: 0.8rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  color: #33ff33;
+}
+a { color: #33ff33; }
+a:hover { color: #66ff66; }
+.cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  background: #33ff33;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+hr {
+  border: none;
+  border-top: 1px solid #1a3a1a;
+  margin: 1.5rem 0;
+}
+.footer {
+  margin-top: 2rem;
+  font-size: 0.75rem;
+  color: #1a5a1a;
+}
+
+/* Navigation */
+nav {
+  max-width: 720px;
+  width: 100%;
+  padding: 1rem 2rem 0;
+  font-size: 0.8rem;
+}
+nav a {
+  color: #1a9a1a;
+  text-decoration: none;
+  margin-right: 0.3rem;
+}
+nav a:hover { color: #33ff33; }
+nav .sep { color: #1a5a1a; }
+
+/* Doc index grid */
+.doc-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem 1.5rem;
+  margin: 0.5rem 0;
+}
+.doc-nav a {
+  font-size: 0.85rem;
+  color: #1a9a1a;
+}
+.doc-nav a:hover { color: #33ff33; }
+.doc-nav a::before {
+  content: "> ";
+  color: #33ff33;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+}
+th {
+  text-align: left;
+  color: #33ff33;
+  border-bottom: 1px solid #1a3a1a;
+  padding: 0.3rem 0.5rem;
+}
+td {
+  color: #1a9a1a;
+  border-bottom: 1px solid #0d1a0d;
+  padding: 0.3rem 0.5rem;
+  vertical-align: top;
+}
+tr:hover td { color: #33ff33; }
+
+/* Endpoint blocks */
+.endpoint {
+  background: #111;
+  border: 1px solid #1a3a1a;
+  padding: 0.6rem 0.8rem;
+  margin: 0.8rem 0 0.3rem;
+  font-size: 0.85rem;
+}
+.endpoint .method {
+  color: #33ff33;
+  font-weight: bold;
+}
+.endpoint .path {
+  color: #66ff66;
+}

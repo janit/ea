@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — ea.js Echelon Analytics</title>
+<meta name="description" content="Echelon Analytics architecture: request flow, SQLite database schema, buffered write pipeline, daily rollups, WASM proof-of-work, authentication, and directory structure.">
+<link rel="canonical" href="https://ea.js.org/architecture.html">
+<link rel="icon" href="favicon.ico">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ea.js — Echelon Analytics">
+<meta property="og:title" content="Architecture — ea.js Echelon Analytics">
+<meta property="og:description" content="Architecture: request flow, SQLite database schema, buffered write pipeline, daily rollups, WASM proof-of-work, and authentication.">
+<meta property="og:url" content="https://ea.js.org/architecture.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Architecture — ea.js Echelon Analytics">
+<meta name="twitter:description" content="Architecture: request flow, SQLite database schema, buffered write pipeline, daily rollups, WASM proof-of-work, and authentication.">
+<link rel="stylesheet" href="css/style.css">
+<script async src="https://ea.islets.app/ea.js" data-site="echelon-analytics" data-cookie></script>
+</head>
+<body>
+<nav><a href="index.html">ea.js</a> <span class="sep">/</span> <a href="architecture.html">architecture</a></nav>
+<main>
+<h1>&gt; Architecture</h1>
+<p class="tagline">Single process, single database, zero external dependencies.</p>
+
+<hr>
+
+<h2>Overview</h2>
+<p>Echelon Analytics is a Deno + Fresh application backed by a single SQLite database. All state — sessions, rate limiter, burst maps, buffered writers — lives in memory. Runs as a single process (no <code>--parallel</code> flag).</p>
+
+<h2>Tech Stack</h2>
+<table>
+<tr><th>Layer</th><th>Technology</th></tr>
+<tr><td>Runtime</td><td>Deno 2.x</td></tr>
+<tr><td>Framework</td><td>Fresh 2.2.0 (file-system routing, Preact islands)</td></tr>
+<tr><td>Build</td><td>Vite 7</td></tr>
+<tr><td>CSS</td><td>Tailwind CSS v4 (<code>@tailwindcss/vite</code> plugin)</td></tr>
+<tr><td>UI</td><td>Preact + <code>@preact/signals</code></td></tr>
+<tr><td>Database</td><td>SQLite via <code>node:sqlite</code> (WAL mode)</td></tr>
+<tr><td>Container</td><td>Docker (multi-stage, non-root, tini)</td></tr>
+</table>
+
+<hr>
+
+<h2>Request Flow</h2>
+<p>How a pageview goes from browser to database:</p>
+
+<h3>1. Script Load</h3>
+<p>Browser fetches <code>/ea.js</code>, which returns a dynamically-generated tracker script with an embedded WASM blob (rotated every 6 hours) and a per-minute challenge string.</p>
+
+<h3>2. Client Initialization</h3>
+<ul>
+<li>Generates or loads session ID from <code>sessionStorage</code></li>
+<li>Reads UTM parameters from the URL</li>
+<li>Starts WASM proof-of-work solver asynchronously</li>
+<li>Attaches interaction listeners (pointer, scroll, click, keydown)</li>
+<li>Waits 800ms minimum before firing beacon</li>
+</ul>
+
+<h3>3. Pageview Beacon</h3>
+<p>On user interaction, the tracker loads <code>/b.gif</code> as an image with query params: path, site ID, session ID, PoW token, screen dimensions, referrer, UTM data.</p>
+
+<h3>4. Server Processing</h3>
+<ul>
+<li>Rate limit check — drop if exceeded</li>
+<li>Known bot UA filter — drop matching requests</li>
+<li>Visitor identity — HMAC hash (cookieless) or <code>_ev</code> cookie (opt-in)</li>
+<li>Bot scoring — compute 0–100 heuristic score</li>
+<li>PoW verification — valid (+0), missing (+15), or invalid (+25)</li>
+<li>Data enrichment — geo, device type, OS, referrer classification</li>
+<li>Push to in-memory <code>BufferedWriter</code></li>
+</ul>
+
+<h3>5. Buffered Write</h3>
+<p>The <code>BufferedWriter</code> batches records (up to 50k) and flushes to SQLite every 10–15 seconds in a single transaction. On shutdown, remaining records are flushed before exit.</p>
+
+<h3>6. Behavioral Events</h3>
+<p>Scroll depth, clicks, bounces, session events, and custom events are sent via <code>sendBeacon</code> to <code>POST /e</code>. Same scoring and buffering pipeline, separate writer instance.</p>
+
+<hr>
+
+<h2>Database</h2>
+
+<h3>SQLite Configuration</h3>
+<table>
+<tr><th>PRAGMA</th><th>Value</th><th>Why</th></tr>
+<tr><td><code>journal_mode</code></td><td>WAL</td><td>Concurrent reads during writes</td></tr>
+<tr><td><code>synchronous</code></td><td>NORMAL</td><td>Balance durability and speed</td></tr>
+<tr><td><code>busy_timeout</code></td><td>5000</td><td>Retry on lock contention</td></tr>
+<tr><td><code>foreign_keys</code></td><td>ON</td><td>Referential integrity</td></tr>
+</table>
+
+<h3>Core Tables</h3>
+<table>
+<tr><th>Table</th><th>Purpose</th><th>Retention</th></tr>
+<tr><td><code>visitor_views</code></td><td>Raw pageviews with bot scores</td><td>90 days</td></tr>
+<tr><td><code>visitor_views_daily</code></td><td>Rollup aggregates (filtered)</td><td>730 days</td></tr>
+<tr><td><code>semantic_events</code></td><td>Behavioral events (clicks, scrolls, bounces, custom)</td><td>90 days</td></tr>
+</table>
+
+<h3>Supporting Tables</h3>
+<table>
+<tr><th>Table</th><th>Purpose</th></tr>
+<tr><td><code>excluded_visitors</code></td><td>Manually excluded visitor IDs</td></tr>
+<tr><td><code>experiments</code></td><td>A/B experiment metadata</td></tr>
+<tr><td><code>experiment_variants</code></td><td>Variant definitions and weights</td></tr>
+<tr><td><code>utm_campaigns</code></td><td>Campaign tracking</td></tr>
+<tr><td><code>site_settings</code></td><td>Per-site consent CSS</td></tr>
+<tr><td><code>perf_metrics</code></td><td>CI/CD performance tracking</td></tr>
+<tr><td><code>maintenance_log</code></td><td>Rollup status tracking</td></tr>
+</table>
+
+<h3>Adapter Interface</h3>
+<p>The database layer uses an interface (<code>DbAdapter</code>) with methods for <code>query</code>, <code>queryOne</code>, <code>run</code>, <code>exec</code>, and <code>transaction</code>. Currently backed by <code>node:sqlite</code>. All queries use parameterized <code>?</code> placeholders.</p>
+
+<hr>
+
+<h2>Data Pipeline</h2>
+
+<h3>Buffered Writers</h3>
+<p>Two <code>BufferedWriter&lt;T&gt;</code> instances run in parallel:</p>
+<table>
+<tr><th>Writer</th><th>Target</th><th>Flush Interval</th><th>Max Buffer</th></tr>
+<tr><td>viewWriter</td><td><code>visitor_views</code></td><td>15 seconds</td><td>50,000</td></tr>
+<tr><td>eventWriter</td><td><code>semantic_events</code></td><td>10 seconds</td><td>50,000</td></tr>
+</table>
+<p>Each flush runs in a single transaction. If a flush fails, records are re-added to the buffer.</p>
+
+<h3>Daily Rollup</h3>
+<p>At ~03:00 UTC, the maintenance task:</p>
+<ul>
+<li>Aggregates yesterday's <code>visitor_views</code> into <code>visitor_views_daily</code></li>
+<li>Filters out <code>bot_score &ge; 50</code> and excluded visitors</li>
+<li>Groups by site, date, device type, country, and returning status</li>
+<li>Uses <code>INSERT OR REPLACE</code> (idempotent on composite primary key)</li>
+</ul>
+
+<h3>Data Purge</h3>
+<p>After rollup, expired data is purged:</p>
+<ul>
+<li><code>visitor_views</code> and <code>semantic_events</code>: older than <code>ECHELON_RETENTION_DAYS</code> (default 90)</li>
+<li><code>visitor_views_daily</code>: older than 730 days</li>
+<li><code>perf_metrics</code>: older than retention period</li>
+<li>Followed by <code>PRAGMA incremental_vacuum(100)</code></li>
+</ul>
+
+<hr>
+
+<h2>Visitor Identity</h2>
+
+<h3>Cookieless (default)</h3>
+<p>HMAC-SHA256 of IP + User-Agent + site ID + date, truncated to 16-char hex. Resets daily — no cross-day tracking. Requires no cookie consent.</p>
+
+<h3>Cookie (opt-in)</h3>
+<p>HttpOnly <code>_ev</code> cookie with a 16-char hex value, 30-day TTL. Enabled with <code>data-cookie</code> on the script tag.</p>
+
+<hr>
+
+<h2>Proof-of-Work System</h2>
+<ul>
+<li>WASM module generated from a 64-byte random seed every 6 hours</li>
+<li>Implements a SipHash-inspired algorithm with randomized constants</li>
+<li>Challenge string rotates every minute (HMAC-SHA256 of minute bucket)</li>
+<li>Client solves and caches token in <code>sessionStorage</code> (90% reuse, 10% re-solve)</li>
+<li>150ms solve timeout — if WASM is too slow, beacon fires without token (penalty applied)</li>
+<li>Server verifies against current + previous WASM slots and last N minute buckets</li>
+</ul>
+
+<hr>
+
+<h2>Authentication</h2>
+
+<h3>Bearer Token</h3>
+<p>Set <code>ECHELON_SECRET</code> env var. Verified via constant-time comparison to prevent timing attacks.</p>
+
+<h3>Username/Password</h3>
+<p>PBKDF2-SHA256 with 600k iterations, 256-bit key, 128-bit random salt. Uses Web Crypto API only — no external dependencies.</p>
+
+<h3>Sessions</h3>
+<p>In-memory session store. Random UUID tokens, 24-hour TTL, pruned every 30 minutes. <code>echelon_session</code> HttpOnly cookie.</p>
+
+<h3>CSRF Protection</h3>
+<p>Mutating requests (POST/PATCH/DELETE) with cookie auth must include a matching Origin or Referer header.</p>
+
+<hr>
+
+<h2>Directory Structure</h2>
+<pre>echelon-analytics/
+  main.ts                  Entry point, graceful shutdown
+  deno.json                Config, import aliases, tasks
+  vite.config.ts           Vite build config
+
+  lib/
+    tracker.ts             Tracker script generation
+    beacon.ts              Pageview beacon handler
+    events-endpoint.ts     Behavioral events handler
+    bot-score.ts           Bot scoring heuristics
+    challenge.ts           PoW challenge management
+    challenge-wasm.ts      WASM bytecode builder
+    buffered-writer.ts     Generic batch writer
+    auth.ts                PBKDF2 password hashing
+    session.ts             In-memory session store
+    config.ts              Env var centralization
+    maintenance.ts         Daily rollup and purge
+    stats.ts               Stats query handlers
+    utm.ts                 Campaign cache
+    rate-limit.ts          Per-IP rate limiter
+    db/
+      adapter.ts           Database interface
+      sqlite-adapter.ts    SQLite implementation
+      database.ts          Init, migrations, singleton
+      schema.ts            DDL and indexes
+
+  routes/
+    ea.js.ts               GET /ea.js
+    b.gif.ts               GET /b.gif
+    e.ts                   POST /e
+    _middleware.ts          CORS, security headers
+    api/                   REST API routes
+    admin/                 Admin UI routes
+
+  islands/                 Preact interactive components
+  components/              Server-only Preact components
+  assets/                  Tailwind CSS, images
+  static/                  Favicon, static files</pre>
+
+<hr>
+
+<h2>Design Decisions</h2>
+
+<h3>Single Process</h3>
+<p>All state is in-memory. Simple to deploy and reason about. Trade-off: horizontal scaling requires moving to external session/state stores.</p>
+
+<h3>WAL Mode</h3>
+<p>Write-Ahead Logging enables concurrent reads while writes proceed. Combined with <code>synchronous = NORMAL</code>, balances durability and throughput.</p>
+
+<h3>Buffered Writes</h3>
+<p>Trades immediate durability for throughput. Beacon returns instantly (~1ms), records batch-flush every 10–15 seconds. Graceful shutdown flushes remaining buffers.</p>
+
+<h3>Runtime WASM Generation</h3>
+<p>Each deployment generates unique WASM blobs. Bot toolkits can't pre-compute solutions. Low barrier for browsers (150ms timeout with fallback).</p>
+
+<h3>Raw Data + Rollups</h3>
+<p>Raw data kept for inspection and re-analysis (90 days). Rollups provide fast long-range queries (2 years). Bot filtering happens at rollup time — raw data preserves everything for forensics.</p>
+
+<hr>
+<div class="doc-nav">
+<a href="installation.html">Installation</a>
+<a href="features.html">Features</a>
+<a href="api.html">API Reference</a>
+<a href="bot-defense.html">Bot Defense</a>
+<a href="configuration.html">Configuration</a>
+</div>
+<p class="footer">AGPL-3.0 — Copyright (C) 2026 Jani Tarvainen</p>
+</main>
+</body>
+</html>

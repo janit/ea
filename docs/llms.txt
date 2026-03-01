@@ -1,0 +1,39 @@
+# ea.js — Echelon Analytics
+
+> Privacy-first, self-hosted, cookieless web analytics. Single script tag, single SQLite database. AGPL-3.0.
+
+## Overview
+
+ea.js is a lightweight alternative to Google Analytics. It tracks pageviews, bounces, sessions, scroll depth, clicks, outbound links, file downloads, form submissions, Core Web Vitals, UTM campaigns, and A/B experiments — all without cookies by default.
+
+Visitors are identified using a daily-rotating HMAC hash (IP + UA + site + date). No cross-day tracking, no cookie consent banners needed (GDPR/ePrivacy compliant). Optional persistent cookies via `data-cookie` attribute.
+
+Bot traffic is filtered using a multi-layered system: known UA blocklist, WebAssembly proof-of-work challenges (rotated every 6 hours), heuristic scoring (0–100), Cloudflare integration, burst detection, and per-IP rate limiting.
+
+Built with Deno, Fresh 2.2.0, Preact, SQLite (WAL mode), Tailwind CSS v4, and Vite 7.
+
+## Quick Start
+
+```
+cd echelon-analytics
+deno task dev
+```
+
+```html
+<script src="https://your-host/ea.js" data-site="my-site"></script>
+```
+
+## Documentation
+
+- [Installation](https://ea.js.org/installation.html): Setup, Docker, reverse proxy, auth
+- [Features](https://ea.js.org/features.html): Script attributes, JS API, auto-tracked events, SPA support
+- [API Reference](https://ea.js.org/api.html): REST endpoints for stats, campaigns, experiments, bots
+- [Bot Defense](https://ea.js.org/bot-defense.html): PoW system, scoring factors, Cloudflare integration
+- [Configuration](https://ea.js.org/configuration.html): All environment variables with defaults
+- [Architecture](https://ea.js.org/architecture.html): Request flow, database schema, data pipeline
+- [Full Documentation for LLMs](https://ea.js.org/llms-full.txt): Complete reference in a single file
+
+## Source
+
+- Repository: https://github.com/janit/ea
+- License: AGPL-3.0
