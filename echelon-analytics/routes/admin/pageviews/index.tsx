@@ -5,8 +5,6 @@ import { Pagination } from "../../../components/Pagination.tsx";
 import { getLiveStats } from "../../../lib/admin-stats.ts";
 import { paginate } from "../../../lib/pagination.ts";
 import type { SQLParam } from "../../../lib/db/adapter.ts";
-import BotActions from "../../../islands/BotActions.tsx";
-import { PUBLIC_MODE } from "../../../lib/config.ts";
 import { formatTime } from "../../../lib/format.ts";
 
 export const handler = define.handlers({
@@ -17,7 +15,6 @@ export const handler = define.handlers({
 
     const device = sp.get("device") || "";
     const country = sp.get("country") || "";
-    const returning = sp.get("returning") || "";
     const bot = sp.get("bot") || "";
     const search = sp.get("search") || "";
     const sort = sp.get("sort") || "time_desc";
@@ -39,92 +36,39 @@ export const handler = define.handlers({
       conditions.push("country_code = ?");
       params.push(country);
     }
-    if (returning === "returning") {
-      conditions.push("MAX(is_returning) = 1");
-    } else if (returning === "new") {
-      conditions.push("MAX(is_returning) = 0");
-    }
     if (bot === "suspect") {
-      conditions.push("MAX(bot_score) >= 50");
+      conditions.push("bot_score >= 50");
     } else if (bot === "clean") {
-      conditions.push("MAX(bot_score) < 50");
+      conditions.push("bot_score < 50");
     }
     if (search) {
       const escaped = search.replace(/[%_]/g, "\\$&");
-      conditions.push("visitor_id LIKE ? ESCAPE '\\'");
-      params.push(`%${escaped}%`);
+      conditions.push(
+        "(visitor_id LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\')",
+      );
+      params.push(`%${escaped}%`, `%${escaped}%`);
     }
 
-    // Split conditions into WHERE (pre-group) and HAVING (post-group)
-    const whereConds: string[] = [];
-    const havingConds: string[] = [];
-    const whereParams: SQLParam[] = [];
-    const havingParams: SQLParam[] = [];
-
-    for (let i = 0; i < conditions.length; i++) {
-      const cond = conditions[i];
-      if (
-        cond.startsWith("MAX(") || cond.startsWith("COUNT(")
-      ) {
-        havingConds.push(cond);
-      } else {
-        whereConds.push(cond);
-        // Count placeholders in condition to pull matching params
-        const placeholders = (cond.match(/\?/g) || []).length;
-        for (let j = 0; j < placeholders; j++) {
-          whereParams.push(params.shift()!);
-        }
-        continue;
-      }
-      const placeholders = (cond.match(/\?/g) || []).length;
-      for (let j = 0; j < placeholders; j++) {
-        havingParams.push(params.shift()!);
-      }
-    }
-
-    const where = whereConds.length > 0
-      ? `WHERE ${whereConds.join(" AND ")}`
+    const where = conditions.length > 0
+      ? `WHERE ${conditions.join(" AND ")}`
       : "";
-    const having = havingConds.length > 0
-      ? `HAVING ${havingConds.join(" AND ")}`
-      : "";
-
-    const allParams = [...whereParams, ...havingParams];
 
     const orderMap: Record<string, string> = {
-      time_desc: "last_seen DESC",
-      time_asc: "last_seen ASC",
-      views_desc: "view_count DESC",
-      views_asc: "view_count ASC",
+      time_desc: "created_at DESC",
+      time_asc: "created_at ASC",
     };
     const orderBy = orderMap[sort];
     if (!orderBy) {
       return new Response("Invalid sort parameter", { status: 400 });
     }
 
-    const sql = `SELECT
-      visitor_id,
-      COUNT(*) AS view_count,
-      MAX(created_at) AS last_seen,
-      MIN(created_at) AS first_seen,
-      MAX(device_type) AS device_type,
-      MAX(country_code) AS country_code,
-      MAX(is_returning) AS is_returning,
-      MAX(bot_score) AS max_bot_score,
-      EXISTS(SELECT 1 FROM excluded_visitors ev WHERE ev.visitor_id = vv.visitor_id) AS is_excluded
-      FROM visitor_views vv
-      ${where}
-      GROUP BY visitor_id
-      ${having}
-      ORDER BY ${orderBy}`;
-
-    const countSql =
-      `SELECT COUNT(*) AS total FROM (SELECT visitor_id FROM visitor_views ${where} GROUP BY visitor_id ${having})`;
+    const sql = `SELECT * FROM visitor_views ${where} ORDER BY ${orderBy}`;
+    const countSql = `SELECT COUNT(*) AS total FROM visitor_views ${where}`;
 
     const result = await paginate<Record<string, unknown>>(db, {
       sql,
       countSql,
-      params: allParams,
+      params,
       page: currentPage,
     });
 
@@ -141,7 +85,7 @@ export const handler = define.handlers({
       ...result,
       devices: devices.map((d) => d.device_type),
       countries: countries.map((c) => c.country_code),
-      filters: { device, country, returning, bot, search, sort },
+      filters: { device, country, bot, search, sort },
       liveStats,
       baseUrl: ctx.url.href,
     };
@@ -158,7 +102,7 @@ function scoreBadge(score: number) {
   return <span class={`bot-score-badge ${cls}`}>{score}</span>;
 }
 
-export default define.page<typeof handler>(function VisitorsPage({ state }) {
+export default define.page<typeof handler>(function PageViewsPage({ state }) {
   const {
     rows,
     total,
@@ -173,7 +117,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
 
   return (
     <AdminNav
-      title="Visitors"
+      title="Page Views"
       liveStats={liveStats}
       siteId={state.siteId}
       knownSites={state.knownSites}
@@ -210,23 +154,6 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
         </select>
 
         <select
-          name="returning"
-          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
-          onchange="this.form.submit()"
-        >
-          <option value="" selected={!filters.returning}>All visitors</option>
-          <option
-            value="returning"
-            selected={filters.returning === "returning"}
-          >
-            Returning
-          </option>
-          <option value="new" selected={filters.returning === "new"}>
-            New
-          </option>
-        </select>
-
-        <select
           name="bot"
           class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
           onchange="this.form.submit()"
@@ -246,16 +173,10 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
           onchange="this.form.submit()"
         >
           <option value="time_desc" selected={filters.sort === "time_desc"}>
-            Last seen
+            Newest first
           </option>
           <option value="time_asc" selected={filters.sort === "time_asc"}>
-            First seen
-          </option>
-          <option value="views_desc" selected={filters.sort === "views_desc"}>
-            Most views
-          </option>
-          <option value="views_asc" selected={filters.sort === "views_asc"}>
-            Fewest views
+            Oldest first
           </option>
         </select>
 
@@ -263,7 +184,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
           <input
             type="text"
             name="search"
-            placeholder="Search visitor ID..."
+            placeholder="Search visitor or path..."
             value={filters.search}
             class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none w-48"
           />
@@ -290,16 +211,13 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
           <thead>
             <tr class="border-b border-[var(--ea-border)]">
               <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
+                Time
+              </th>
+              <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
                 Visitor
               </th>
-              <th class="text-right px-4 py-2 text-xs text-[var(--ea-muted)]">
-                Views
-              </th>
               <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
-                Last Seen
-              </th>
-              <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
-                First Seen
+                Path
               </th>
               <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
                 Device
@@ -308,13 +226,13 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
                 Country
               </th>
               <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
+                Referrer
+              </th>
+              <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
+                Interaction
+              </th>
+              <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
                 Score
-              </th>
-              <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
-                Status
-              </th>
-              <th class="text-left px-4 py-2 text-xs text-[var(--ea-muted)]">
-                Actions
               </th>
             </tr>
           </thead>
@@ -322,10 +240,11 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
             {rows.map((r: Record<string, unknown>, i: number) => (
               <tr
                 key={i}
-                class={`border-b border-[var(--ea-surface-alt)] ${
-                  r.is_excluded ? "excluded-row" : ""
-                }`}
+                class="border-b border-[var(--ea-surface-alt)]"
               >
+                <td class="px-4 py-1.5 text-[var(--ea-muted)] whitespace-nowrap">
+                  {formatTime(r.created_at as string)}
+                </td>
                 <td class="px-4 py-1.5">
                   <a
                     href={`/admin/visitors/${
@@ -336,14 +255,11 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
                     {(r.visitor_id as string).slice(0, 12)}...
                   </a>
                 </td>
-                <td class="px-4 py-1.5 text-right tabular-nums text-[var(--ea-primary)]">
-                  {r.view_count as number}
-                </td>
-                <td class="px-4 py-1.5 text-[var(--ea-muted)] whitespace-nowrap">
-                  {formatTime(r.last_seen as string)}
-                </td>
-                <td class="px-4 py-1.5 text-[var(--ea-muted)] whitespace-nowrap">
-                  {formatTime(r.first_seen as string)}
+                <td
+                  class="px-4 py-1.5 text-[var(--ea-text)] truncate max-w-[200px]"
+                  title={r.path as string}
+                >
+                  {r.path as string}
                 </td>
                 <td class="px-4 py-1.5 text-[var(--ea-text)]">
                   {r.device_type as string}
@@ -351,24 +267,19 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
                 <td class="px-4 py-1.5 text-[var(--ea-text)]">
                   {r.country_code as string}
                 </td>
-                <td class="px-4 py-1.5">
-                  {scoreBadge(r.max_bot_score as number)}
+                <td
+                  class="px-4 py-1.5 text-[var(--ea-muted)] truncate max-w-[120px]"
+                  title={r.referrer as string ?? ""}
+                >
+                  {(r.referrer as string) || "-"}
+                </td>
+                <td class="px-4 py-1.5 tabular-nums text-[var(--ea-primary)]">
+                  {r.interaction_ms
+                    ? `${((r.interaction_ms as number) / 1000).toFixed(1)}s`
+                    : "-"}
                 </td>
                 <td class="px-4 py-1.5">
-                  {r.is_returning
-                    ? (
-                      <span class="text-xs text-[var(--ea-info)]">
-                        returning
-                      </span>
-                    )
-                    : <span class="text-xs text-[var(--ea-muted)]">new</span>}
-                </td>
-                <td class="px-4 py-1.5">
-                  <BotActions
-                    visitorId={r.visitor_id as string}
-                    isExcluded={!!(r.is_excluded as number)}
-                    readOnly={PUBLIC_MODE}
-                  />
+                  {scoreBadge(r.bot_score as number)}
                 </td>
               </tr>
             ))}
@@ -378,7 +289,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
 
       {rows.length === 0 && (
         <p class="text-[var(--ea-muted)] text-sm mt-4">
-          No visitors found.
+          No page views found.
         </p>
       )}
 

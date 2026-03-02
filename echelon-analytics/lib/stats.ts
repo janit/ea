@@ -463,12 +463,15 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
     twentyFourHoursAgo,
   );
 
-  // Recent visitors — last 20 non-bot
+  // Recent visitors — last 20 unique non-bot visitors
   const recentVisitors = await db.query<Record<string, unknown>>(
-    `SELECT visitor_id, site_id, device_type, country_code, path, created_at, is_returning
+    `SELECT visitor_id, MAX(device_type) AS device_type,
+            MAX(country_code) AS country_code, MAX(created_at) AS created_at,
+            COUNT(*) AS view_count
      FROM visitor_views
      WHERE site_id = ? AND created_at >= ? AND bot_score < 50
-     ORDER BY created_at DESC LIMIT 20`,
+     GROUP BY visitor_id
+     ORDER BY MAX(created_at) DESC LIMIT 20`,
     siteId,
     oneHourAgo,
   );

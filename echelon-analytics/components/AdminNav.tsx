@@ -185,6 +185,7 @@ export function AdminNav(
                 <a href="/admin">Dashboard</a>
                 <a href="/admin/realtime">Realtime</a>
                 <a href="/admin/visitors">Visitors</a>
+                <a href="/admin/pageviews">Page Views</a>
                 <a href="/admin/events">Events</a>
 
                 {/* Bots — expanded: hover dropdown */}

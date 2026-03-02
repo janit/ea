@@ -136,6 +136,7 @@ Deno.test("handleBeacon — cookie mode sets Set-Cookie header", async () => {
   assertEquals(setCookie!.includes("_ev="), true);
   assertEquals(setCookie!.includes("HttpOnly"), true);
   assertEquals(setCookie!.includes("SameSite=None"), true);
+  assertEquals(setCookie!.includes("Partitioned"), true);
   await db.close();
 });
 

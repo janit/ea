@@ -264,14 +264,14 @@ export default function DashboardLive({ siteId }: Props) {
                 <th class="text-left px-3 py-1.5 text-[var(--ea-muted)]">
                   Visitor
                 </th>
+                <th class="text-right px-3 py-1.5 text-[var(--ea-muted)]">
+                  Views
+                </th>
                 <th class="text-left px-3 py-1.5 text-[var(--ea-muted)]">
                   Device
                 </th>
                 <th class="text-left px-3 py-1.5 text-[var(--ea-muted)]">
                   Country
-                </th>
-                <th class="text-left px-3 py-1.5 text-[var(--ea-muted)]">
-                  Path
                 </th>
                 <th class="text-left px-3 py-1.5 text-[var(--ea-muted)]">
                   When
@@ -292,17 +292,14 @@ export default function DashboardLive({ siteId }: Props) {
                         {(v.visitor_id as string).slice(0, 10)}
                       </a>
                     </td>
+                    <td class="px-3 py-1 text-right tabular-nums text-[var(--ea-primary)]">
+                      {v.view_count as number}
+                    </td>
                     <td class="px-3 py-1 text-[var(--ea-text)]">
                       {(v.device_type as string) || "-"}
                     </td>
                     <td class="px-3 py-1 text-[var(--ea-text)]">
                       {(v.country_code as string) || "-"}
-                    </td>
-                    <td
-                      class="px-3 py-1 text-[var(--ea-text)] truncate max-w-[200px]"
-                      title={v.path as string}
-                    >
-                      {v.path as string}
                     </td>
                     <td class="px-3 py-1 text-[var(--ea-muted)] whitespace-nowrap">
                       {timeAgo(v.created_at as string)}

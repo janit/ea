@@ -377,7 +377,7 @@ export async function handleBeacon(
   if (useCookie) {
     responseHeaders.set(
       "Set-Cookie",
-      `_ev=${visitorId}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=2592000`,
+      `_ev=${visitorId}; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=2592000`,
     );
   }
   return new Response(PIXEL, { headers: responseHeaders });
