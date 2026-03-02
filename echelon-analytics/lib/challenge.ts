@@ -140,7 +140,7 @@ function solveWith(
 
 // ── Nonce tracking (prevent token replay) ───────────────────────────────────
 
-const usedTokens = new Map<string, number>(); // token → expiry timestamp
+const usedTokens = new Map<string, number>(); // "tok:sid" → expiry timestamp
 const NONCE_TTL_MS = (CHALLENGE_WINDOW_MINUTES + 1) * 60_000;
 const MAX_USED_TOKENS = 100_000;
 let lastEviction = Date.now();
@@ -167,17 +167,17 @@ function evictExpiredTokens(force = false): void {
 // ── Token verification ──────────────────────────────────────────────────────
 
 /**
- * Verify a PoW token. Returns "valid", "missing", "invalid", or "replayed".
+ * Verify a PoW token. Returns "valid", "missing", or "invalid".
  *
  * Tries the current + previous WASM instances against
  * the last CHALLENGE_WINDOW_MINUTES minute buckets.
- * Each valid token can only be used once (nonce tracking).
+ * Same-session re-presentations (beacon + events endpoint) are valid.
  */
 export async function verifyToken(
   tok: string | null,
   siteId: string,
   sid: string,
-): Promise<"valid" | "missing" | "invalid" | "replayed"> {
+): Promise<"valid" | "missing" | "invalid"> {
   if (!tok) {
     debug("pow", "verifyToken → missing", {
       siteId,
@@ -194,14 +194,21 @@ export async function verifyToken(
     return "invalid";
   }
 
-  // Check for replay before doing expensive WASM verification
+  // Key on tok:sid so the same session can reuse its token across endpoints
+  // (beacon + events) and across pageviews within the same minute bucket.
+  // The WASM solve is deterministic for the same challenge+sid+site, so a
+  // tok:sid hit means "this session already proved its PoW" — that's valid,
+  // not a replay attack. Cross-session replay is impossible because sid is
+  // baked into the WASM input.
+  const nonceKey = tok + ":" + sid;
   evictExpiredTokens(usedTokens.size > MAX_USED_TOKENS * 0.9);
-  if (usedTokens.has(tok)) {
-    debug("pow", "verifyToken → replayed", {
+  if (usedTokens.has(nonceKey)) {
+    debug("pow", "verifyToken → valid (same session)", {
       tok: tok.slice(0, 8) + "...",
       siteId,
+      sid: sid.slice(0, 8) + "...",
     });
-    return "replayed";
+    return "valid";
   }
 
   const slot = await ensureCurrentSlot();
@@ -227,8 +234,8 @@ export async function verifyToken(
     for (const s of slots) {
       const expected = solveWith(s.instance, input);
       if (constantTimeEquals(expected, tok)) {
-        // Mark token as used
-        usedTokens.set(tok, Date.now() + NONCE_TTL_MS);
+        // Mark token+session as used
+        usedTokens.set(nonceKey, Date.now() + NONCE_TTL_MS);
         debug("pow", "verifyToken → valid", {
           tok: tok.slice(0, 8) + "...",
           siteId,
@@ -255,9 +262,9 @@ export async function verifyToken(
 
 /** Bot score penalty for token verification result. */
 export function tokenPenalty(
-  result: "valid" | "missing" | "invalid" | "replayed",
+  result: "valid" | "missing" | "invalid",
 ): number {
   if (result === "valid") return 0;
   if (result === "missing") return 30;
-  return 40; // invalid or replayed
+  return 40; // invalid
 }

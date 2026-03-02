@@ -635,10 +635,10 @@ const SCRIPT_HEADERS = {
 
 export async function handleTracker(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const proto = (TRUST_PROXY && req.headers.get("x-forwarded-proto")) ??
+  const proto = (TRUST_PROXY && req.headers.get("x-forwarded-proto")) ||
     url.protocol.replace(":", "");
-  const host = (TRUST_PROXY && req.headers.get("x-forwarded-host")) ??
-    req.headers.get("host") ??
+  const host = (TRUST_PROXY && req.headers.get("x-forwarded-host")) ||
+    req.headers.get("host") ||
     url.host;
   const origin = `${proto}://${host}`;
   const siteId = url.searchParams.get("s") ?? "default";

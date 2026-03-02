@@ -21,10 +21,6 @@ Deno.test("tokenPenalty — invalid → 40", () => {
   assertEquals(tokenPenalty("invalid"), 40);
 });
 
-Deno.test("tokenPenalty — replayed → 40", () => {
-  assertEquals(tokenPenalty("replayed"), 40);
-});
-
 // ── generateChallenge ───────────────────────────────────────────────────────
 
 Deno.test("generateChallenge — returns 32-char hex string", async () => {
