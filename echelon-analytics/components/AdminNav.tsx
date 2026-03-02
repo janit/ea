@@ -122,6 +122,11 @@ export function AdminNav(
         <meta property="og:site_name" content="Echelon Analytics" />
         <link rel="icon" href="/favicon.ico" />
         <link rel="stylesheet" href="/styles.css" />
+        {
+          /* SECURITY: dangerouslySetInnerHTML below only interpolates compile-time
+            constants (getTelemetryScript, NAV_CSS, DEFAULT_THEME). No user-controlled
+            data is ever passed. Do not add request-scoped or DB-sourced values here. */
+        }
         {telemetryState === "on" && (
           <script
             dangerouslySetInnerHTML={{ __html: getTelemetryScript() }}
@@ -259,6 +264,7 @@ export function AdminNav(
             </label>
           </div>
         </nav>
+        {/* SECURITY: NAV_JS is a module-level constant with no user input */}
         <script dangerouslySetInnerHTML={{ __html: NAV_JS }} />
 
         {liveStats && (

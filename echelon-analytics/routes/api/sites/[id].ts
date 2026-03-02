@@ -32,12 +32,16 @@ export const handler = define.handlers({
     const rawCss = typeof body.consent_css === "string"
       ? body.consent_css.slice(0, 4096)
       : null;
-    // Strip url(), @import, and expression() to prevent CSS-based data exfiltration
+    // Sanitize CSS to prevent data exfiltration via external resource loads.
+    // 1. Strip backslashes to defeat Unicode escape bypasses (\75rl → url)
+    // 2. Block url(), @import, @font-face, @keyframes, expression(), behavior:, -moz-binding:
     const css = rawCss
-      ? rawCss.replace(
-        /url\s*\(|@import\b|expression\s*\(/gi,
-        "/* blocked */",
-      )
+      ? rawCss
+        .replace(/\\/g, "")
+        .replace(
+          /url[\s\t\r\n]*\(|@import\b|@font-face\b|@keyframes\b|expression[\s]*\(|behavior[\s]*:|javascript[\s]*:|-moz-binding[\s]*:/gi,
+          "/* blocked */",
+        )
       : null;
 
     await db.run(

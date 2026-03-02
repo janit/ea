@@ -5,7 +5,7 @@
 // Sites embed: <script async src="https://echelon.example.com/ea.js" data-site="my-site"></script>
 
 import { generateChallenge, getWasmBase64 } from "./challenge.ts";
-import { COOKIE_CONSENT, TRUST_PROXY } from "./config.ts";
+import { ALLOWED_ORIGINS, COOKIE_CONSENT, TRUST_PROXY } from "./config.ts";
 import { isDebugEnabled } from "./debug.ts";
 import { getConsentCss } from "./consent-css.ts";
 
@@ -55,13 +55,13 @@ var _dbg = __ECHELON_DEBUG__;
 function dbg() { if (_dbg) console.log.apply(console, ["[echelon:debug]"].concat(Array.prototype.slice.call(arguments))); }
 if (_dbg) dbg("hello from echelon");
 
-var wantClicks = sc.hasAttribute("data-clicks");
-var wantScroll = sc.hasAttribute("data-scroll");
-var wantHover = sc.hasAttribute("data-hover");
-var wantOutbound = sc.hasAttribute("data-outbound");
-var wantDownloads = sc.hasAttribute("data-downloads");
-var wantForms = sc.hasAttribute("data-forms");
-var wantVitals = sc.hasAttribute("data-vitals");
+var wantClicks = !sc.hasAttribute("data-no-clicks");
+var wantScroll = !sc.hasAttribute("data-no-scroll");
+var wantHover = !sc.hasAttribute("data-no-hover");
+var wantOutbound = !sc.hasAttribute("data-no-outbound");
+var wantDownloads = !sc.hasAttribute("data-no-downloads");
+var wantForms = !sc.hasAttribute("data-no-forms");
+var wantVitals = !sc.hasAttribute("data-no-vitals");
 
 /*CONSENT_START*/
 // ── Cookie Consent Banner (Web Component + Shadow DOM) ──────────────────────
@@ -332,7 +332,7 @@ addEventListener("pageshow", function(e) {
   }
 });
 
-// ── 4. Click Tracking (merged: data-clicks, data-outbound, data-downloads) ──
+// ── 4. Click Tracking (merged: clicks, outbound, downloads — on by default) ──
 var dlExts = wantDownloads ? /\\.(pdf|zip|tar|gz|bz2|xz|rar|7z|dmg|exe|msi|apk|ipa|doc|docx|xls|xlsx|ppt|pptx|csv|mp3|mp4|mov|avi|mkv|epub|iso)$/i : null;
 if (wantClicks || wantOutbound || wantDownloads) document.addEventListener("click", function(e) {
   if (!e.isTrusted) return;
@@ -363,7 +363,7 @@ if (wantClicks || wantOutbound || wantDownloads) document.addEventListener("clic
   } catch(x) {}
 }, { passive: true });
 
-// ── 5. Scroll Depth (opt-in: data-scroll) ───────────────────────────────────
+// ── 5. Scroll Depth (on by default, opt-out: data-no-scroll) ────────────────
 var maxScroll = 0, milestones = [25, 50, 75, 90, 100], reached = {};
 function checkScroll() {
   var h = document.documentElement.scrollHeight - window.innerHeight;
@@ -386,7 +386,7 @@ if (wantScroll) addEventListener("scroll", function() {
   requestAnimationFrame(function() { checkScroll(); scrollTicking = 0; });
 }, { passive: true });
 
-// ── 6. Hover Tracking (opt-in: data-hover) ──────────────────────────────────
+// ── 6. Hover Tracking (on by default, opt-out: data-no-hover) ───────────────
 if (wantHover) {
   var hoverTimer = 0, hoverEl = null;
   document.addEventListener("mouseover", function(e) {
@@ -413,7 +413,7 @@ if (wantHover) {
   }, { passive: true });
 }
 
-// ── 7. Form Submission Tracking (opt-in: data-forms) ────────────────────────
+// ── 7. Form Submission Tracking (on by default, opt-out: data-no-forms) ─────
 if (wantForms) document.addEventListener("submit", function(e) {
   if (!e.isTrusted) return;
   var form = e.target;
@@ -432,7 +432,7 @@ if (wantForms) document.addEventListener("submit", function(e) {
   sendEvents([{ type: "form_submit", data: d, sessionId: sid }]);
 }, { passive: true });
 
-// ── 8. Web Vitals (opt-in: data-vitals) ────────────────────────────────────
+// ── 8. Web Vitals (on by default, opt-out: data-no-vitals) ─────────────────
 if (wantVitals && typeof PerformanceObserver !== "undefined") {
   var vitalsSent = {};
 
@@ -637,9 +637,24 @@ export async function handleTracker(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const proto = (TRUST_PROXY && req.headers.get("x-forwarded-proto")) ||
     url.protocol.replace(":", "");
-  const host = (TRUST_PROXY && req.headers.get("x-forwarded-host")) ||
-    req.headers.get("host") ||
-    url.host;
+  // Validate X-Forwarded-Host against ALLOWED_ORIGINS to prevent host-header
+  // poisoning that could redirect tracker beacons to an attacker's domain.
+  let host = req.headers.get("host") || url.host;
+  if (TRUST_PROXY) {
+    const fwdHost = req.headers.get("x-forwarded-host");
+    if (fwdHost) {
+      if (ALLOWED_ORIGINS.size === 0) {
+        host = fwdHost;
+      } else {
+        try {
+          const fwdHostname = fwdHost.replace(/:\d+$/, "").toLowerCase();
+          host = ALLOWED_ORIGINS.has(fwdHostname) ? fwdHost : host;
+        } catch {
+          // Malformed — fall through to default host
+        }
+      }
+    }
+  }
   const origin = `${proto}://${host}`;
   const siteId = url.searchParams.get("s") ?? "default";
   const consentCss = COOKIE_CONSENT ? getConsentCss(siteId) : "";

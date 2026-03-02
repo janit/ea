@@ -223,48 +223,44 @@ See https://ea.js.org/telemetry.html for details.
 
 ## Script Attributes
 
+All behavioral tracking (clicks, scroll, hover, outbound, downloads, forms, vitals) is enabled by default. Use data-no-* attributes to opt out of specific features.
+
 | Attribute | Description |
 |-----------|-------------|
 | data-site | Site identifier. Defaults to "default" if omitted. |
-| data-cookie | Enable returning-visitor cookie. With ECHELON_COOKIE_CONSENT=true, shows consent banner first. |
-| data-clicks | Track clicks on elements with data-echelon-click attribute. |
-| data-scroll | Track scroll depth milestones (25%, 50%, 75%, 90%, 100%). |
-| data-hover | Track 1-second hovers on elements with data-echelon-hover attribute. |
-| data-outbound | Track clicks on outbound links (different origin). |
-| data-downloads | Track clicks on file download links (pdf, zip, dmg, mp3, mp4, etc.). |
-| data-forms | Track form submission events. |
-| data-vitals | Track Core Web Vitals: LCP, CLS, INP. |
+| data-cookie | Enable returning-visitor cookie (opt-in). With ECHELON_COOKIE_CONSENT=true, shows consent banner first. |
+| data-no-clicks | Disable click tracking on elements with data-echelon-click attribute. |
+| data-no-scroll | Disable scroll depth milestones (25%, 50%, 75%, 90%, 100%). |
+| data-no-hover | Disable 1-second hover tracking on elements with data-echelon-hover attribute. |
+| data-no-outbound | Disable outbound link click tracking. |
+| data-no-downloads | Disable file download link tracking (pdf, zip, dmg, mp3, mp4, etc.). |
+| data-no-forms | Disable form submission tracking. |
+| data-no-vitals | Disable Core Web Vitals: LCP, CLS, INP. |
 
-### Enable Everything
+### Selective Opt-Out
 
 ```html
 <script async src="https://your-host/ea.js"
   data-site="my-site"
-  data-cookie
-  data-clicks
-  data-scroll
-  data-hover
-  data-outbound
-  data-downloads
-  data-forms
-  data-vitals></script>
+  data-no-hover
+  data-no-vitals></script>
 ```
 
 ## HTML Element Markup
 
-### Click Tracking (requires data-clicks)
+### Click Tracking (on by default, disable with data-no-clicks)
 
 ```html
 <button data-echelon-click="signup-cta">Sign Up</button>
 ```
 
-### Hover Tracking (requires data-hover, fires after 1s)
+### Hover Tracking (on by default, disable with data-no-hover, fires after 1s)
 
 ```html
 <div data-echelon-hover="pricing-card">...</div>
 ```
 
-### Form Tracking (requires data-forms)
+### Form Tracking (on by default, disable with data-no-forms)
 
 ```html
 <form data-echelon-form="contact-form">...</form>

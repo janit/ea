@@ -53,40 +53,36 @@
 <tr><th>Attribute</th><th>Description</th></tr>
 <tr><td><code>data-site</code></td><td>Site identifier. Defaults to <code>"default"</code> if omitted.</td></tr>
 <tr><td><code>data-cookie</code></td><td>Enable returning-visitor cookie. With <code>ECHELON_COOKIE_CONSENT=true</code>, shows consent banner first.</td></tr>
-<tr><td><code>data-clicks</code></td><td>Track clicks on elements with <code>data-echelon-click</code> attribute.</td></tr>
-<tr><td><code>data-scroll</code></td><td>Track scroll depth milestones (25%, 50%, 75%, 90%, 100%).</td></tr>
-<tr><td><code>data-hover</code></td><td>Track 1-second hovers on elements with <code>data-echelon-hover</code> attribute.</td></tr>
-<tr><td><code>data-outbound</code></td><td>Track clicks on outbound links (different origin).</td></tr>
-<tr><td><code>data-downloads</code></td><td>Track clicks on file download links (pdf, zip, dmg, mp3, mp4, etc.).</td></tr>
-<tr><td><code>data-forms</code></td><td>Track form submission events.</td></tr>
-<tr><td><code>data-vitals</code></td><td>Track Core Web Vitals: LCP, CLS, INP.</td></tr>
+<tr><td><code>data-no-clicks</code></td><td>Disable click tracking on elements with <code>data-echelon-click</code> attribute. (On by default.)</td></tr>
+<tr><td><code>data-no-scroll</code></td><td>Disable scroll depth milestones (25%, 50%, 75%, 90%, 100%). (On by default.)</td></tr>
+<tr><td><code>data-no-hover</code></td><td>Disable 1-second hover tracking on elements with <code>data-echelon-hover</code> attribute. (On by default.)</td></tr>
+<tr><td><code>data-no-outbound</code></td><td>Disable outbound link click tracking. (On by default.)</td></tr>
+<tr><td><code>data-no-downloads</code></td><td>Disable file download link tracking (pdf, zip, dmg, mp3, mp4, etc.). (On by default.)</td></tr>
+<tr><td><code>data-no-forms</code></td><td>Disable form submission tracking. (On by default.)</td></tr>
+<tr><td><code>data-no-vitals</code></td><td>Disable Core Web Vitals: LCP, CLS, INP. (On by default.)</td></tr>
 </table>
 
-<h3>Enable Everything</h3>
+<p>All behavioral tracking is <strong>enabled by default</strong>. Use <code>data-no-*</code> attributes to selectively disable features.</p>
+
+<h3>Selective Opt-Out</h3>
 <pre>&lt;script async src="https://your-host/ea.js"
   data-site="my-site"
-  data-cookie
-  data-clicks
-  data-scroll
-  data-hover
-  data-outbound
-  data-downloads
-  data-forms
-  data-vitals&gt;&lt;/script&gt;</pre>
+  data-no-hover
+  data-no-vitals&gt;&lt;/script&gt;</pre>
 
 <h2>HTML Element Markup</h2>
 <p>Annotate elements to track specific interactions:</p>
 
 <h3>Click Tracking</h3>
-<p>Requires <code>data-clicks</code> on the script tag.</p>
+<p>Enabled by default. Disable with <code>data-no-clicks</code> on the script tag.</p>
 <pre>&lt;button data-echelon-click="signup-cta"&gt;Sign Up&lt;/button&gt;</pre>
 
 <h3>Hover Tracking</h3>
-<p>Requires <code>data-hover</code> on the script tag. Fires after 1 second of hover.</p>
+<p>Enabled by default. Fires after 1 second of hover. Disable with <code>data-no-hover</code> on the script tag.</p>
 <pre>&lt;div data-echelon-hover="pricing-card"&gt;...&lt;/div&gt;</pre>
 
 <h3>Form Tracking</h3>
-<p>Requires <code>data-forms</code> on the script tag.</p>
+<p>Enabled by default. Disable with <code>data-no-forms</code> on the script tag.</p>
 <pre>&lt;form data-echelon-form="contact-form"&gt;...&lt;/form&gt;</pre>
 
 <h3>Custom Data Attributes</h3>

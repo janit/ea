@@ -14,6 +14,7 @@ import { getClientIp } from "../../lib/ip.ts";
 // --- Login rate limiting ---
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
+const MAX_LOGIN_MAP_SIZE = 50_000;
 
 interface RateLimitEntry {
   attempts: number;
@@ -22,15 +23,18 @@ interface RateLimitEntry {
 
 const loginAttempts = new Map<string, RateLimitEntry>();
 
-// GC stale rate limit entries every 5 minutes
-setInterval(() => {
+/** Prune expired entries from the login attempts map. */
+function pruneLoginAttempts(): void {
   const now = Date.now();
   for (const [ip, entry] of loginAttempts) {
     if (now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
       loginAttempts.delete(ip);
     }
   }
-}, 5 * 60 * 1000);
+}
+
+// GC stale rate limit entries every 5 minutes
+setInterval(pruneLoginAttempts, 5 * 60 * 1000);
 
 function isRateLimited(ip: string): boolean {
   const entry = loginAttempts.get(ip);
@@ -43,6 +47,14 @@ function isRateLimited(ip: string): boolean {
 }
 
 function recordFailedAttempt(ip: string): void {
+  // Prevent unbounded map growth from distributed attacks
+  if (loginAttempts.size >= MAX_LOGIN_MAP_SIZE) {
+    pruneLoginAttempts();
+    if (loginAttempts.size >= MAX_LOGIN_MAP_SIZE) {
+      const oldest = loginAttempts.keys().next().value;
+      if (oldest !== undefined) loginAttempts.delete(oldest);
+    }
+  }
   const now = Date.now();
   const entry = loginAttempts.get(ip);
   if (!entry || now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
@@ -84,6 +96,8 @@ export const handler = define.handlers({
     if (usernameOk && passwordOk) {
       const { token } = createSession(username);
       const headers = new Headers({ location: "/admin" });
+      // Path=/ is required: session cookie must cover both /admin and /api paths
+      // (islands fetch API endpoints under /api using the session cookie)
       headers.append(
         "set-cookie",
         `echelon_session=${token}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=86400`,
@@ -114,6 +128,7 @@ export default define.page<typeof handler>(function LoginPage({ state }) {
         <meta name="robots" content="noindex, nofollow" />
         <link rel="icon" href="/favicon.ico" />
         <link rel="stylesheet" href="/styles.css" />
+        {/* SECURITY: Only interpolates DEFAULT_THEME (compile-time constant). No user data. */}
         <script
           dangerouslySetInnerHTML={{
             __html:

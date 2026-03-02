@@ -145,13 +145,13 @@ export const handler = define.handlers([
         "Set-Cookie",
         `echelon_site=${
           encodeURIComponent(siteId)
-        }; Path=/admin; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+        }; Path=/admin; HttpOnly; SameSite=Lax; Secure; Max-Age=31536000`,
       );
     }
     if (paramDays && paramDays !== cookieDays) {
       resp.headers.append(
         "Set-Cookie",
-        `echelon_days=${days}; Path=/admin; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+        `echelon_days=${days}; Path=/admin; HttpOnly; SameSite=Lax; Secure; Max-Age=31536000`,
       );
     }
 

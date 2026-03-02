@@ -114,31 +114,30 @@ new pageview beacons on route changes.
 
 ## Script Tag Options
 
+All behavioral tracking (clicks, scroll, hover, outbound, downloads, forms,
+vitals) is **enabled by default**. Use `data-no-*` attributes to opt out of
+specific features:
+
 ```html
 <script
   src="https://echelon.example.com/ea.js"
   data-site="my-site"
-  data-clicks
-  data-scroll
-  data-hover
-  data-outbound
-  data-downloads
-  data-forms
-  data-vitals
+  data-no-hover
+  data-no-vitals
 ></script>
 ```
 
-| Attribute        | What it tracks                                                          |
-| ---------------- | ----------------------------------------------------------------------- |
-| `data-site`      | Site identifier (required)                                              |
-| `data-cookie`    | Enable persistent visitor cookie (requires consent)                     |
-| `data-clicks`    | Click events on elements with `data-echelon-click`                      |
-| `data-scroll`    | Scroll depth milestones (25/50/75/90/100%)                              |
-| `data-hover`     | Hover events (1s dwell threshold) on elements with `data-echelon-hover` |
-| `data-outbound`  | Outbound link click tracking                                            |
-| `data-downloads` | File download click tracking (pdf, zip, exe, mp3, mp4, etc.)            |
-| `data-forms`     | Form submission tracking                                                |
-| `data-vitals`    | Core Web Vitals (LCP, CLS, INP) via PerformanceObserver                 |
+| Attribute           | Effect                                                                   |
+| ------------------- | ------------------------------------------------------------------------ |
+| `data-site`         | Site identifier (required)                                               |
+| `data-cookie`       | Enable persistent visitor cookie (opt-in, requires consent)              |
+| `data-no-clicks`    | Disable click events on elements with `data-echelon-click`               |
+| `data-no-scroll`    | Disable scroll depth milestones (25/50/75/90/100%)                       |
+| `data-no-hover`     | Disable hover events (1s dwell) on elements with `data-echelon-hover`    |
+| `data-no-outbound`  | Disable outbound link click tracking                                     |
+| `data-no-downloads` | Disable file download click tracking (pdf, zip, exe, mp3, mp4, etc.)     |
+| `data-no-forms`     | Disable form submission tracking                                         |
+| `data-no-vitals`    | Disable Core Web Vitals (LCP, CLS, INP) via PerformanceObserver         |
 
 ### Markup for Clicks and Hovers
 
