@@ -77,7 +77,7 @@
 <tr><td><code>data-no-hover</code></td><td>Disable 1-second hover tracking on elements with <code>data-echelon-hover</code> attribute. (On by default.)</td></tr>
 <tr><td><code>data-no-outbound</code></td><td>Disable outbound link click tracking. (On by default.)</td></tr>
 <tr><td><code>data-no-downloads</code></td><td>Disable file download link tracking (pdf, zip, dmg, mp3, mp4, etc.). (On by default.)</td></tr>
-<tr><td><code>data-no-forms</code></td><td>Disable form submission tracking. (On by default.)</td></tr>
+<tr><td><code>data-no-forms</code></td><td>Disable form tracking (field focus, field edits, submissions). (On by default.)</td></tr>
 <tr><td><code>data-no-vitals</code></td><td>Disable Core Web Vitals: LCP, CLS, INP. (On by default.)</td></tr>
 </table>
 
@@ -101,7 +101,16 @@
 <pre>&lt;div data-echelon-hover="pricing-card"&gt;...&lt;/div&gt;</pre>
 
 <h3>Form Tracking</h3>
-<p>Enabled by default. Disable with <code>data-no-forms</code> on the script tag.</p>
+<p>Enabled by default. Tracks three levels of form interaction. Disable with <code>data-no-forms</code> on the script tag.</p>
+
+<table>
+<tr><th>Event</th><th>Trigger</th><th>Data</th></tr>
+<tr><td><code>form_focus</code></td><td>User focuses an input, select, or textarea</td><td>Tag name, input type, field name, form ID/name, page path</td></tr>
+<tr><td><code>form_blur</code></td><td>User edits a field (fires on change/blur)</td><td>Same as focus + value length. Value included for non-sensitive fields (passwords and hidden fields excluded). On anonymized sites, values are scrambled client-side.</td></tr>
+<tr><td><code>form_submit</code></td><td>Form is submitted</td><td>Form method, ID, name, optional <code>data-echelon-form</code> label, page path</td></tr>
+</table>
+
+<p>Optionally label forms for easier identification in the dashboard:</p>
 <pre>&lt;form data-echelon-form="contact-form"&gt;...&lt;/form&gt;</pre>
 
 <h3>Custom Data Attributes</h3>
@@ -126,6 +135,9 @@
 <tr><td><code>bounce</code></td><td>No interaction within 120 seconds, or tab hidden without prior interaction.</td></tr>
 <tr><td><code>session_end</code></td><td>Tab becomes hidden.</td></tr>
 <tr><td><code>session_resume</code></td><td>Tab becomes visible again after <code>session_end</code>.</td></tr>
+<tr><td><code>form_focus</code></td><td>User focuses a form field (input, select, textarea).</td></tr>
+<tr><td><code>form_blur</code></td><td>User edits a form field (change event on blur).</td></tr>
+<tr><td><code>form_submit</code></td><td>Form submission.</td></tr>
 </table>
 
 <h2>SPA Support</h2>

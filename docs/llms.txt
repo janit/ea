@@ -4,7 +4,7 @@
 
 ## Overview
 
-Echelon Analytics is a lightweight alternative to Google Analytics. It tracks pageviews, bounces, sessions, scroll depth, clicks, outbound links, file downloads, form submissions, Core Web Vitals, UTM campaigns, and A/B experiments — all without cookies by default.
+Echelon Analytics is a lightweight alternative to Google Analytics. It tracks pageviews, bounces, sessions, scroll depth, clicks, outbound links, file downloads, form interactions (focus, edits, submissions), Core Web Vitals, UTM campaigns, and A/B experiments — all without cookies by default.
 
 Visitors are identified using a daily-rotating HMAC hash (IP + UA + site + date). No cross-day tracking, no cookie consent banners needed (GDPR/ePrivacy compliant). Optional persistent cookies via `data-cookie` attribute.
 
@@ -17,7 +17,7 @@ Built with Deno, Fresh 2.2.0, Preact, SQLite (WAL mode), Tailwind CSS v4, and Vi
 ```
 cd echelon-analytics
 deno task dev
-deno task test       # Run 214 server-side tests
+deno task test       # Run 217 server-side tests
 deno task test:e2e   # Browser E2E tests (requires Chromium)
 ```
 
@@ -64,11 +64,11 @@ CSRF protection on cookie-authenticated mutations (Origin/Referer host matching)
 
 ## Anonymization
 
-Sites in `ECHELON_ANONYMIZE_SITES` get deterministic anonymization: HMAC-hashed visitor IDs (daily key rotation), fictional planet names for countries, themed aliases for devices/OS.
+Sites in `ECHELON_ANONYMIZE_SITES` get deterministic pre-storage anonymization: HMAC-hashed visitor IDs (daily key rotation), fictional planet names for countries, Norwegian fisherman names for sessions, classic terminal resolutions for screen sizes, tropical bird names for OS, sci-fi vessel classes for device types, NSA codename URLs for referrers, operation codenames for UTM params. Event data sanitized to safe behavioral keys only. Form values and URL query params scrambled client-side.
 
 ## Testing
 
-214 server-side tests + 14 browser E2E tests. Covers bot scoring, PoW, sessions, rate limiting, buffered writes, DB, stats, middleware (auth, CSRF, CORS, CSP), endpoints, public mode, and maintenance. Tests run before every tagged release.
+217 server-side tests + 14 browser E2E tests. Covers bot scoring, PoW, sessions, rate limiting, buffered writes, DB, stats, middleware (auth, CSRF, CORS, CSP), endpoints, public mode, and maintenance. Tests run before every tagged release.
 
 ## Public Dashboard
 

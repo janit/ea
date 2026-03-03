@@ -136,7 +136,7 @@ specific features:
 | `data-no-hover`     | Disable hover events (1s dwell) on elements with `data-echelon-hover`    |
 | `data-no-outbound`  | Disable outbound link click tracking                                     |
 | `data-no-downloads` | Disable file download click tracking (pdf, zip, exe, mp3, mp4, etc.)     |
-| `data-no-forms`     | Disable form submission tracking                                         |
+| `data-no-forms`     | Disable form tracking (field focus, edits, submissions)                  |
 | `data-no-vitals`    | Disable Core Web Vitals (LCP, CLS, INP) via PerformanceObserver         |
 
 ### Markup for Clicks and Hovers
@@ -170,6 +170,9 @@ These fire without any markup:
 | Bounce         | No interaction for 120s, or page hidden without engagement  |
 | Session end    | Page hidden or `pagehide`                                   |
 | Session resume | Tab returns to visible                                      |
+| Form focus     | User focuses a form field (input, select, textarea)         |
+| Form edit      | User edits a form field (fires on change/blur)              |
+| Form submit    | Form submission                                             |
 
 ## API Endpoints
 
@@ -333,15 +336,26 @@ All HTML responses include:
 
 ## Anonymization
 
-Sites listed in `ECHELON_ANONYMIZE_SITES` get deterministic anonymization:
+Sites listed in `ECHELON_ANONYMIZE_SITES` get deterministic anonymization
+**before storage** — original values never touch disk:
 
-- Visitor IDs are HMAC-hashed with a daily-rotating key
-- Country codes are replaced with fictional planet names
-- Device types and OS names are mapped to themed aliases
-- The same visitor on the same day always maps to the same anonymous identity
+- **Visitor IDs** — HMAC-SHA256 hashed with a daily-rotating key
+- **Session IDs** — mapped to Norwegian fisherman names
+- **Country codes** — replaced with fictional exoplanet names
+- **Screen sizes** — mapped to classic terminal resolutions (e.g. 80x25 IBM PC)
+- **OS names** — mapped to tropical bird names
+- **Device types** — mapped to sci-fi vessel classes (mothership/shuttle/probe)
+- **Referrers** — replaced with fictional NSA intranet URLs
+- **UTM params** — mapped to military operation codenames
+- **Event data** — sanitized to safe behavioral keys only (scroll depth, dwell
+  time, HTML tag names). URLs, user text, and custom attributes are stripped.
+- **Form field values** — scrambled client-side (each letter/digit replaced with
+  a random one of the same type) before transmission
+- **URL query parameters** — query param values scrambled client-side to prevent
+  search text and other user input from appearing in page paths
 
-Used by the public demo dashboard to display real traffic patterns without
-exposing any visitor information.
+All mappings are deterministic within a day (same input produces same output) so
+analytics aggregation still works. Mappings rotate daily and are not reversible.
 
 ## Telemetry
 
@@ -397,7 +411,7 @@ Two independent auth modes (can be used simultaneously):
 
 ## Testing
 
-214 server-side tests cover bot scoring, PoW challenges, sessions, rate
+217 server-side tests cover bot scoring, PoW challenges, sessions, rate
 limiting, buffered writes, DB operations, stats queries, middleware (auth, CSRF,
 CORS, CSP), beacon/event endpoints, public mode lockdown, and maintenance
 rollups. Browser E2E tests (14 cases) use headless Chromium via

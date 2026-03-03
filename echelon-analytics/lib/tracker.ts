@@ -68,6 +68,19 @@ function scramble(s) {
   }
   return r;
 }
+// Scramble query parameter values in a path, preserving keys and structure
+function anonPath(p) {
+  if (!_anon) return p;
+  var qi = p.indexOf("?");
+  if (qi < 0) return p;
+  var base = p.slice(0, qi);
+  try {
+    var qp = new URLSearchParams(p.slice(qi));
+    var parts = [];
+    qp.forEach(function(v, k) { parts.push(k + "=" + encodeURIComponent(scramble(v))); });
+    return parts.length ? base + "?" + parts.join("&") : base;
+  } catch(x) { return base; }
+}
 
 var wantClicks = !sc.hasAttribute("data-no-clicks");
 var wantScroll = !sc.hasAttribute("data-no-scroll");
@@ -214,7 +227,7 @@ function sendEvents(events) {
 
 // ── 1. Pageview Beacon ──────────────────────────────────────────────────────
 var t0 = Date.now(), fired = 0;
-var beaconUrl = base + "/b.gif?p=" + b64(location.pathname + location.search) + "&s=" + encodeURIComponent(siteId) + (cookieConsented ? "&ck=1" : "");
+var beaconUrl = base + "/b.gif?p=" + b64(anonPath(location.pathname + location.search)) + "&s=" + encodeURIComponent(siteId) + (cookieConsented ? "&ck=1" : "");
 
 // External referrer
 var ref = document.referrer;
@@ -612,7 +625,7 @@ function onNavigate() {
   } catch(x) {}
 
   // New pageview beacon
-  beaconUrl = base + "/b.gif?p=" + b64(location.pathname + location.search) + "&s=" + encodeURIComponent(siteId) + (cookieConsented ? "&ck=1" : "");
+  beaconUrl = base + "/b.gif?p=" + b64(anonPath(location.pathname + location.search)) + "&s=" + encodeURIComponent(siteId) + (cookieConsented ? "&ck=1" : "");
   if (window.matchMedia("(display-mode:standalone)").matches || navigator.standalone)
     beaconUrl += "&pwa=1";
   if (utmC) {

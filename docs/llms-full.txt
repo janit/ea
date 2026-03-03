@@ -195,13 +195,22 @@ Admin search queries (visitors, events) escape % and _ characters in user input 
 
 ## Anonymization
 
-Sites listed in ECHELON_ANONYMIZE_SITES get deterministic anonymization applied to all API responses:
+Sites listed in ECHELON_ANONYMIZE_SITES get deterministic anonymization applied before storage — original values never touch disk:
 
 - Visitor IDs: HMAC-SHA256 hashed with a key derived from ECHELON_SECRET + current date. Same visitor on the same day always maps to the same anonymous ID.
-- Country codes: Replaced with fictional planet names (30+ exoplanet-themed names)
-- Device types: Mapped to themed aliases (fisherman names)
-- OS names: Mapped to NSA codename-style aliases
-- Daily key rotation ensures anonymized IDs change each day
+- Session IDs: Mapped to Norwegian fisherman names (e.g. "Torstein Sjømann", "Olav Sildekong")
+- Country codes: Replaced with fictional exoplanet names (e.g. "Kepler-442b", "Proxima-b")
+- Screen sizes: Mapped to classic terminal resolutions (e.g. 1920x1080 → 80×25 IBM PC)
+- OS names: Mapped to tropical bird names (e.g. "macOS 10.15" → "Scarlet Macaw")
+- Device types: Mapped to sci-fi vessel classes (desktop → mothership, tablet → shuttle, mobile → probe)
+- Referrers: Replaced with fictional NSA intranet URLs (e.g. https://nsa-intranet.gov/ops/PRISM-a3f2)
+- UTM params: Mapped to military operation codenames (e.g. "operation-mockingbird")
+- Experiments: Hashed to experiment-<hash> / variant-<hash>
+- Event data: Sanitized to safe behavioral keys only per event type (scroll depth, dwell time, metric values, HTML tag names). URLs, user text, and custom attributes are stripped.
+- Form field values: Scrambled client-side before transmission (each letter replaced with random letter, each digit with random digit)
+- URL query parameters: Query param values scrambled client-side to prevent search text from appearing in page paths
+
+All mappings are deterministic within a day (same input → same output). Daily key rotation ensures anonymized IDs change each day.
 
 The public demo dashboard at ea.islets.app uses this to display real traffic patterns without exposing any visitor information.
 
@@ -234,7 +243,7 @@ All behavioral tracking (clicks, scroll, hover, outbound, downloads, forms, vita
 | data-no-hover | Disable 1-second hover tracking on elements with data-echelon-hover attribute. |
 | data-no-outbound | Disable outbound link click tracking. |
 | data-no-downloads | Disable file download link tracking (pdf, zip, dmg, mp3, mp4, etc.). |
-| data-no-forms | Disable form submission tracking. |
+| data-no-forms | Disable form tracking (field focus, edits, submissions). |
 | data-no-vitals | Disable Core Web Vitals: LCP, CLS, INP. |
 
 ### Selective Opt-Out
@@ -261,6 +270,14 @@ All behavioral tracking (clicks, scroll, hover, outbound, downloads, forms, vita
 ```
 
 ### Form Tracking (on by default, disable with data-no-forms)
+
+Tracks three levels of form interaction:
+
+- form_focus: User focuses an input, select, or textarea. Data: tag, input type, field name, form ID/name, path.
+- form_blur: User edits a field (fires on change/blur). Data: same as focus + value length and value (non-sensitive fields only; passwords/hidden excluded). On anonymized sites, values are scrambled client-side.
+- form_submit: Form submission. Data: method, ID, name, optional label, path.
+
+Optionally label forms:
 
 ```html
 <form data-echelon-form="contact-form">...</form>
@@ -295,6 +312,9 @@ Limits: max 16 properties, key max 64 chars, value max 512 chars.
 | bounce | No interaction within 120 seconds, or tab hidden without prior interaction. |
 | session_end | Tab becomes hidden. |
 | session_resume | Tab becomes visible again after session_end. |
+| form_focus | User focuses a form field (input, select, textarea). |
+| form_blur | User edits a form field (fires on change/blur). |
+| form_submit | Form submission. |
 
 ## SPA Support
 
@@ -758,7 +778,7 @@ ECHELON_TELEMETRY=true
 
 ## Overview
 
-214 server-side tests and 14 browser E2E tests. Tests are integrated into `deno task check` and run automatically before every tagged release via scripts/tag-release.sh.
+217 server-side tests and 14 browser E2E tests. Tests are integrated into `deno task check` and run automatically before every tagged release via scripts/tag-release.sh.
 
 ## Running Tests
 
@@ -779,7 +799,7 @@ Tests live in echelon-analytics/tests/:
 | pagination_test.ts | lib/pagination.ts — offset, clamping, totalPages | 6 |
 | config_test.ts | lib/config.ts — constantTimeEquals, validateSiteId | 7 |
 | cookie_test.ts | lib/cookie.ts — getCookie, getRequestCookie | 8 |
-| anonymize_test.ts | lib/anonymize.ts — HMAC hashing, fictional names, determinism | 13 |
+| anonymize_test.ts | lib/anonymize.ts — HMAC hashing, fictional names, determinism | 16 |
 | challenge_test.ts | lib/challenge.ts — tokenPenalty, generateChallenge, verifyToken | 8 |
 | session_test.ts | lib/session.ts — create, get, delete, expiry, prune | 8 |
 | rate-limit_test.ts | lib/rate-limit.ts — isRateLimited | 2 |

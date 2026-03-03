@@ -150,9 +150,11 @@
 <tr><td>OS name</td><td>Mapped to a tropical bird name (e.g. &ldquo;macOS 10.15&rdquo; &rarr; &ldquo;Scarlet Macaw&rdquo;)</td></tr>
 <tr><td>Device type</td><td>Mapped to sci-fi vessel classes (e.g. &ldquo;desktop&rdquo; &rarr; &ldquo;mothership&rdquo;)</td></tr>
 <tr><td>Event data</td><td>Sanitized to safe behavioral keys only (e.g. scroll depth, dwell time, metric values, HTML tag names). URLs, user text, and custom attributes are stripped.</td></tr>
+<tr><td>Form field values</td><td>Scrambled client-side before transmission: each letter replaced with a random letter, each digit with a random digit. Passwords and hidden fields are excluded entirely.</td></tr>
+<tr><td>URL query params</td><td>Query parameter values scrambled client-side (e.g. <code>?search=testing</code> becomes <code>?search=xkwpfbq</code>). Keys and path preserved.</td></tr>
 <tr><td>Path</td><td>Kept as-is (admin panel paths like <code>/admin/visitors</code> are not sensitive)</td></tr>
 </table>
-<p>All mappings are deterministic within a day (same input &rarr; same output), so analytics aggregation works correctly. The mappings rotate daily and are not reversible.</p>
+<p>All server-side mappings are deterministic within a day (same input &rarr; same output), so analytics aggregation works correctly. The mappings rotate daily and are not reversible. Client-side scrambling (form values, query params) uses random replacement and is non-deterministic.</p>
 
 <h3>MCP server</h3>
 <p>The <a href="mcp.html">MCP server</a> at <code>ea.islets.app</code> also serves the already-anonymized data. AI agents querying the telemetry database via MCP tools will only ever see anonymized records.</p>
