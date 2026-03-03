@@ -264,6 +264,45 @@ Deno.test("anonymizeEvent — anonymizes experiment and variant IDs", async () =
   assertEquals(anon.variant_id!.startsWith("variant-"), true);
 });
 
+Deno.test("anonymizeEvent — form_blur value is scrambled preserving length and char class", async () => {
+  const formBlurEvent = baseEvent({
+    event_type: "form_blur",
+    data:
+      '{"tag":"INPUT","input_type":"text","field_name":"q","value":"hello world","value_length":11,"path":"/search"}',
+  });
+  const anon = await anonymizeEvent(formBlurEvent);
+  const parsed = JSON.parse(anon.data);
+  // value is scrambled but preserves length
+  assertNotEquals(parsed.value, "hello world");
+  assertEquals(parsed.value.length, "hello world".length);
+  // space is preserved at original position
+  assertEquals(parsed.value[5], " ");
+  // all non-space chars are lowercase letters
+  for (let i = 0; i < parsed.value.length; i++) {
+    if (i === 5) continue; // space
+    assertEquals(/[a-z]/.test(parsed.value[i]), true);
+  }
+  // deterministic
+  const anon2 = await anonymizeEvent(formBlurEvent);
+  const parsed2 = JSON.parse(anon2.data);
+  assertEquals(parsed.value, parsed2.value);
+  // other safe keys are preserved
+  assertEquals(parsed.field_name, "q");
+  assertEquals(parsed.value_length, 11);
+  assertEquals(parsed.path, "/search");
+});
+
+Deno.test("anonymizeEvent — form_blur null/empty value stays unchanged", async () => {
+  const noValue = baseEvent({
+    event_type: "form_blur",
+    data:
+      '{"tag":"INPUT","input_type":"text","field_name":"q","value_length":0}',
+  });
+  const anon = await anonymizeEvent(noValue);
+  const parsed = JSON.parse(anon.data);
+  assertEquals(parsed.value, undefined);
+});
+
 Deno.test("anonymizeEvent — null fields stay null", async () => {
   const anon = await anonymizeEvent(
     baseEvent({

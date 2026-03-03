@@ -15,7 +15,7 @@ export default function ThemeSelector({ themes }: { themes: Theme[] }) {
     current.value = value;
     document.cookie = `echelon_theme=${value}; Path=/; Max-Age=${
       60 * 60 * 24 * 365
-    }; SameSite=Lax`;
+    }; SameSite=Lax; Secure`;
     document.documentElement.dataset.theme = value;
   }
 

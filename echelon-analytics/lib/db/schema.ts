@@ -49,6 +49,10 @@ export const SCHEMA_SQL = `
     ON visitor_views(site_id, created_at)
     WHERE bot_score < 50;
 
+  CREATE INDEX IF NOT EXISTS idx_vv_bot_score
+    ON visitor_views(bot_score, visitor_id)
+    WHERE bot_score >= 25;
+
   CREATE TABLE IF NOT EXISTS visitor_views_daily (
     site_id TEXT NOT NULL,
     date TEXT NOT NULL,

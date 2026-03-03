@@ -1,11 +1,13 @@
 import { define } from "../../../utils.ts";
 import type { SQLParam } from "../../../lib/db/adapter.ts";
+import { validateSiteId } from "../../../lib/config.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
     const url = new URL(ctx.req.url);
     const db = ctx.state.db;
-    const siteId = url.searchParams.get("site_id");
+    const rawSiteId = url.searchParams.get("site_id");
+    const siteId = rawSiteId ? validateSiteId(rawSiteId) : null;
     const minScore = parseInt(url.searchParams.get("min_score") ?? "25");
     const limit = Math.min(
       Math.max(parseInt(url.searchParams.get("limit") ?? "50") || 50, 1),

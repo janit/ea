@@ -394,6 +394,42 @@ function anonymizeDeviceType(dt: string | null): string | null {
   return DEVICE_TYPE_MAP[dt.toLowerCase()] ?? "unknown-vessel";
 }
 
+// ── Form value anonymization ─────────────────────────────────────────────
+// Scramble user-typed text to random characters preserving character class
+// and length: letters→letters, digits→digits, spaces/punctuation→preserved.
+
+const LOWER = "abcdefghijklmnopqrstuvwxyz";
+const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const DIGITS = "0123456789";
+
+async function anonymizeFormValue(
+  value: string | null,
+): Promise<string | null> {
+  if (!value || value.length === 0) return value;
+  // Get enough hash bytes to cover the entire string
+  const hash = await hmacHex(value);
+  const chars: string[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    // Use two hex chars per character position (wrapping around the hash)
+    const byte = parseInt(
+      hash.slice((i * 2) % hash.length, (i * 2) % hash.length + 2),
+      16,
+    );
+    if (/[a-z]/.test(ch)) {
+      chars.push(LOWER[byte % LOWER.length]);
+    } else if (/[A-Z]/.test(ch)) {
+      chars.push(UPPER[byte % UPPER.length]);
+    } else if (/[0-9]/.test(ch)) {
+      chars.push(DIGITS[byte % DIGITS.length]);
+    } else {
+      // Preserve spaces, punctuation, etc.
+      chars.push(ch);
+    }
+  }
+  return chars.join("");
+}
+
 // ── Event data sanitization ───────────────────────────────────────────────
 // Per-event-type allowlists of data keys that are safe to keep (behavioral
 // metrics only — no URLs, no user-supplied text, no custom attributes).
@@ -444,6 +480,33 @@ function sanitizeEventData(eventType: string, dataStr: string): string {
     return JSON.stringify(clean);
   } catch {
     return "{}";
+  }
+}
+
+// Keys in sanitized event data that contain user-typed text and must be scrambled
+const USER_INPUT_KEYS: Record<string, Set<string>> = {
+  form_blur: new Set(["value"]),
+};
+
+/** Sanitize event data then anonymize any user-typed text fields. */
+async function anonymizeEventData(
+  eventType: string,
+  dataStr: string,
+): Promise<string> {
+  const sanitized = sanitizeEventData(eventType, dataStr);
+  const scrambleKeys = USER_INPUT_KEYS[eventType];
+  if (!scrambleKeys) return sanitized;
+  try {
+    const parsed = JSON.parse(sanitized);
+    if (typeof parsed !== "object" || parsed === null) return sanitized;
+    for (const key of scrambleKeys) {
+      if (key in parsed && typeof parsed[key] === "string") {
+        parsed[key] = await anonymizeFormValue(parsed[key]);
+      }
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return sanitized;
   }
 }
 
@@ -532,7 +595,7 @@ export async function anonymizeEvent(
         NSA_CODENAMES[pickIndex(refHash, NSA_CODENAMES.length)]
       }-${refHash.slice(0, 4)}`
       : null,
-    data: sanitizeEventData(record.event_type, record.data ?? "{}"),
+    data: await anonymizeEventData(record.event_type, record.data ?? "{}"),
     experiment_id: record.experiment_id
       ? `experiment-${(await hmacHex(record.experiment_id)).slice(0, 8)}`
       : record.experiment_id,

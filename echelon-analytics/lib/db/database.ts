@@ -35,6 +35,8 @@ async function _initDb(): Promise<DbAdapter> {
   raw.exec("PRAGMA synchronous = NORMAL");
   raw.exec("PRAGMA busy_timeout = 5000");
   raw.exec("PRAGMA foreign_keys = ON");
+  raw.exec("PRAGMA cache_size = -32000"); // 32 MB page cache
+  raw.exec("PRAGMA temp_store = MEMORY");
 
   // Create schema
   raw.exec(SCHEMA_SQL);
@@ -141,6 +143,13 @@ async function migrate(adapter: DbAdapter): Promise<void> {
       "[echelon] Migration: added browser_version to visitor_views",
     );
   }
+
+  // Partial index for bots page queries (WHERE bot_score >= 25)
+  await adapter.exec(
+    `CREATE INDEX IF NOT EXISTS idx_vv_bot_score
+     ON visitor_views(bot_score, visitor_id)
+     WHERE bot_score >= 25`,
+  );
 
   if (!await adapter.columnExists("semantic_events", "bot_score_detail")) {
     await adapter.exec(

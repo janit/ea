@@ -7,6 +7,7 @@ import {
   hashIp,
   hashVisitor,
   isKnownBot,
+  parseBrowser,
   parseOS,
   recordBurst,
 } from "@/lib/bot-score.ts";
@@ -307,4 +308,84 @@ Deno.test("computeBotScore — cumulative penalties stack", () => {
     screenHeight: 1080,
   });
   assertGreater(score, 50);
+});
+
+// ── parseBrowser ──────────────────────────────────────────────────────────
+
+Deno.test("parseBrowser — Chrome", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  );
+  assertEquals(r?.name, "Chrome");
+  assertEquals(r?.version, "120.0.0.0");
+});
+
+Deno.test("parseBrowser — Edge (not misidentified as Chrome)", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+  );
+  assertEquals(r?.name, "Edge");
+  assertEquals(r?.version, "120.0.0.0");
+});
+
+Deno.test("parseBrowser — Firefox", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+  );
+  assertEquals(r?.name, "Firefox");
+  assertEquals(r?.version, "121.0");
+});
+
+Deno.test("parseBrowser — Safari", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
+  );
+  assertEquals(r?.name, "Safari");
+  assertEquals(r?.version, "17.2.1");
+});
+
+Deno.test("parseBrowser — Opera (not misidentified as Chrome)", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0",
+  );
+  assertEquals(r?.name, "Opera");
+  assertEquals(r?.version, "106.0.0.0");
+});
+
+Deno.test("parseBrowser — Samsung Browser (not misidentified as Chrome)", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+  );
+  assertEquals(r?.name, "Samsung Browser");
+  assertEquals(r?.version, "23.0");
+});
+
+Deno.test("parseBrowser — UC Browser", () => {
+  const r = parseBrowser(
+    "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 UCBrowser/13.4.0.1306 Mobile Safari/537.36",
+  );
+  assertEquals(r?.name, "UC Browser");
+  assertEquals(r?.version, "13.4.0.1306");
+});
+
+Deno.test("parseBrowser — undefined for empty/unknown", () => {
+  assertEquals(parseBrowser(undefined), undefined);
+  assertEquals(parseBrowser(""), undefined);
+  assertEquals(parseBrowser("SomeWeirdBot/1.0"), undefined);
+});
+
+Deno.test("parseBrowser — never throws on arbitrary strings", () => {
+  const cases = [
+    "💀",
+    "a".repeat(10000),
+    "Edg/",
+    "Chrome/",
+    "Version/ Safari",
+    "\x00\x01\x02",
+    "OPR/abc",
+  ];
+  for (const ua of cases) {
+    // Should not throw — may return undefined or a result
+    parseBrowser(ua);
+  }
 });

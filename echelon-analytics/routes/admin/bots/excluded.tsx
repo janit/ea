@@ -13,7 +13,8 @@ export const handler = define.handlers({
        FROM excluded_visitors ev
        LEFT JOIN visitor_views vv ON vv.visitor_id = ev.visitor_id
        GROUP BY ev.visitor_id
-       ORDER BY ev.created_at DESC`,
+       ORDER BY ev.created_at DESC
+       LIMIT 500`,
     );
     const liveStats = await getLiveStats(db);
     ctx.state.pageData = { rows, liveStats };

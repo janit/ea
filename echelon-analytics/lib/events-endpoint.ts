@@ -205,8 +205,12 @@ export async function handleEvents(
     } catch { /* ignore malformed */ }
   }
 
-  // Visitor identity: cookie if present, otherwise cookieless hash
-  const cookieVid = getCookie(req, "_ev") ?? undefined;
+  // Visitor identity: cookie if present and valid hex, otherwise cookieless hash
+  const COOKIE_RE = /^[0-9a-f]{16}$/;
+  const rawCookie = getCookie(req, "_ev") ?? undefined;
+  const cookieVid = rawCookie && COOKIE_RE.test(rawCookie)
+    ? rawCookie
+    : undefined;
   let visitorId: string | undefined = cookieVid;
   const isReturning = cookieVid !== undefined;
 

@@ -42,6 +42,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'", // Required: Tailwind + inline styles
   `img-src 'self' data: ${TELEMETRY_ENDPOINT}`,
   `connect-src 'self' ${TELEMETRY_ENDPOINT}`,
+  "object-src 'none'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

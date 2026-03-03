@@ -1,4 +1,5 @@
 import { assertEquals } from "@std/assert";
+import { FakeTime } from "@std/testing/time";
 import {
   createSession,
   deleteSession,
@@ -54,4 +55,41 @@ Deno.test("pruneSessions — does not remove active sessions", () => {
   const { token } = createSession("prune-active");
   pruneSessions();
   assertEquals(getSession(token) !== undefined, true);
+});
+
+// ── Session expiry (FakeTime) ─────────────────────────────────────────────
+
+Deno.test("getSession — expires after 24h TTL", () => {
+  using _time = new FakeTime();
+  const { token } = createSession("ttl-test");
+  assertEquals(getSession(token) !== undefined, true);
+  _time.tick(24 * 60 * 60 * 1000 + 1); // 24h + 1ms
+  assertEquals(getSession(token), undefined);
+});
+
+Deno.test("getSession — expires after 30min idle", () => {
+  using _time = new FakeTime();
+  const { token } = createSession("idle-test");
+  assertEquals(getSession(token) !== undefined, true);
+  _time.tick(30 * 60 * 1000 + 1); // 30min + 1ms without access
+  assertEquals(getSession(token), undefined);
+});
+
+Deno.test("getSession — activity resets idle timeout", () => {
+  using _time = new FakeTime();
+  const { token } = createSession("idle-reset");
+  _time.tick(29 * 60 * 1000); // 29 min
+  assertEquals(getSession(token) !== undefined, true); // access resets idle
+  _time.tick(29 * 60 * 1000); // 29 more min (58 total, but only 29 since last access)
+  assertEquals(getSession(token) !== undefined, true); // still alive
+  _time.tick(31 * 60 * 1000); // 31 more min idle
+  assertEquals(getSession(token), undefined); // now expired
+});
+
+Deno.test("pruneSessions — removes expired sessions", () => {
+  using _time = new FakeTime();
+  const { token } = createSession("prune-expired");
+  _time.tick(25 * 60 * 60 * 1000); // 25 hours
+  pruneSessions();
+  assertEquals(getSession(token), undefined);
 });

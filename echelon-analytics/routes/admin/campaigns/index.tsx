@@ -11,7 +11,7 @@ export const handler = define.handlers({
   async GET(ctx) {
     const db = ctx.state.db;
     const campaigns = await db.query<Record<string, unknown>>(
-      `SELECT * FROM utm_campaigns ORDER BY created_at DESC`,
+      `SELECT * FROM utm_campaigns ORDER BY created_at DESC LIMIT 500`,
     );
     const stats = await getCampaignStats(db, 30);
     const liveStats = await getLiveStats(db);

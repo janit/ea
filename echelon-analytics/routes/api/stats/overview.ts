@@ -1,10 +1,12 @@
 import { define } from "../../../utils.ts";
 import { getOverview } from "../../../lib/stats.ts";
+import { validateSiteId } from "../../../lib/config.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
     const url = new URL(ctx.req.url);
-    const siteId = url.searchParams.get("site_id");
+    const rawSiteId = url.searchParams.get("site_id");
+    const siteId = rawSiteId ? validateSiteId(rawSiteId) : null;
     const days = Math.min(
       Math.max(parseInt(url.searchParams.get("days") ?? "30") || 30, 1),
       730,
