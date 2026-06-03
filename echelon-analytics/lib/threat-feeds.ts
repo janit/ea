@@ -11,8 +11,8 @@
 // Feeds:
 //   1. monperrus/crawler-user-agents  — 600+ crawler UA regex patterns → +30
 //   2. ai-robots-txt/robots.json      — 130+ AI bot names             → +40
-//   3. AWS ip-ranges.json             — datacenter IPv4 CIDRs          → +25
-//   4. GCP cloud.json                 — datacenter IPv4 CIDRs          → +25
+//   3. AWS ip-ranges.json             — datacenter IPv4+IPv6 CIDRs     → +15
+//   4. GCP cloud.json                 — datacenter IPv4+IPv6 CIDRs     → +15
 
 // ── Configuration ───────────────────────────────────────────────────────────
 

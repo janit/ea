@@ -79,6 +79,22 @@ function fpKey(fp: Fingerprint): string {
 }
 
 /**
+ * A fingerprint with no parseable browser/OS identity and no screen dimensions
+ * carries no distinguishing signal — it's just "absence of data", which is the
+ * most easily-shared key of all. Privacy-hardened browsers (Tor, Lockdown Mode,
+ * header-stripping proxies) all collapse to this. Clustering on it would flag
+ * unrelated real users as a bot farm, so such prints are excluded from
+ * correlation (other layers — burst, threat feeds, PoW, no-event — still cover
+ * them).
+ */
+function isUninformativeFingerprint(fp: Fingerprint): boolean {
+  return fp.osName === "unknown" &&
+    fp.browserName === "unknown" &&
+    fp.screenWidth === 0 &&
+    fp.screenHeight === 0;
+}
+
+/**
  * Record a beacon request for correlation.
  * Called from the beacon handler after computing bot score signals.
  */
@@ -124,6 +140,7 @@ async function sweep(db: DbAdapter): Promise<void> {
   const groups = new Map<string, ClusterMatch>();
 
   for (const p of prints) {
+    if (isUninformativeFingerprint(p.fingerprint)) continue;
     const fk = fpKey(p.fingerprint);
     const groupKey = `${p.siteId}||${fk}`;
     let group = groups.get(groupKey);
@@ -265,8 +282,13 @@ async function sweep(db: DbAdapter): Promise<void> {
  */
 async function penalizeNoEventBounces(db: DbAdapter): Promise<void> {
   const now = new Date();
-  const minAge = new Date(now.getTime() - NO_EVENTS_MAX_AGE_MS).toISOString();
-  const maxAge = new Date(now.getTime() - NO_EVENTS_MIN_AGE_MS).toISOString();
+  // Window of views eligible for judging: old enough to have settled (≥ 5 min)
+  // but still recent (≤ 30 min). windowStart is the older bound (now − 30 min),
+  // windowEnd the newer bound (now − 5 min).
+  const windowStart = new Date(now.getTime() - NO_EVENTS_MAX_AGE_MS)
+    .toISOString();
+  const windowEnd = new Date(now.getTime() - NO_EVENTS_MIN_AGE_MS)
+    .toISOString();
 
   const result = await db.run(
     `UPDATE visitor_views
@@ -284,8 +306,8 @@ async function penalizeNoEventBounces(db: DbAdapter): Promise<void> {
            AND se.site_id = visitor_views.site_id
        )`,
     NO_EVENTS_PENALTY,
-    minAge,
-    maxAge,
+    windowStart,
+    windowEnd,
   );
 
   if (result.changes > 0) {

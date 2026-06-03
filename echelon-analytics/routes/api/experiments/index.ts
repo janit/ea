@@ -47,16 +47,42 @@ export const handler = define.handlers({
         { status: 400 },
       );
     }
-    const expName = String(name).slice(0, 256);
-    const expDesc = description ? String(description).slice(0, 1024) : null;
-    const expMetric = String(metric_event_type).slice(0, 128);
-    const expAlloc = Math.max(
-      1,
-      Math.min(100, Number(allocation_percent) || 100),
+    // deno-lint-ignore no-control-regex
+    const stripControl = (s: string) => s.replace(/[\x00-\x1f]/g, "");
+    const expName = stripControl(String(name).slice(0, 256));
+    const expDesc = description
+      ? stripControl(String(description).slice(0, 1024))
+      : null;
+    const expMetric = stripControl(String(metric_event_type).slice(0, 128));
+    const expAlloc = Math.round(
+      Math.max(1, Math.min(100, Number(allocation_percent) || 100)),
     );
     const variantList = Array.isArray(variants)
       ? (variants as Record<string, unknown>[]).slice(0, 20)
       : [];
+
+    // Validate variant weights up front so a bad weight is a clean 400 and the
+    // transaction's catch block is left to deal with real DB errors only.
+    const preparedVariants = [];
+    for (const v of variantList) {
+      const weight = Number(v.weight);
+      if (!Number.isFinite(weight) || weight <= 0) {
+        return Response.json(
+          {
+            error: "invalid_payload",
+            message: "Variant weight must be a finite positive number",
+          },
+          { status: 400 },
+        );
+      }
+      preparedVariants.push({
+        variantId: stripControl(String(v.variant_id ?? "").slice(0, 128)),
+        name: stripControl(String(v.name ?? "").slice(0, 256)),
+        weight,
+        isControl: v.is_control ? 1 : 0,
+        config: v.config ? JSON.stringify(v.config).slice(0, 4096) : null,
+      });
+    }
 
     try {
       await db.transaction(async (tx) => {
@@ -70,38 +96,35 @@ export const handler = define.handlers({
           expAlloc,
         );
 
-        for (const v of variantList) {
-          const weight = Number(v.weight);
-          if (!Number.isFinite(weight) || weight <= 0) {
-            throw new Error("Invalid variant weight");
-          }
+        for (const v of preparedVariants) {
           await tx.run(
             `INSERT INTO experiment_variants (experiment_id, variant_id, name, weight, is_control, config)
              VALUES (?, ?, ?, ?, ?, ?)`,
             expId,
-            String(v.variant_id ?? "").slice(0, 128),
-            String(v.name ?? "").slice(0, 256),
-            weight,
-            v.is_control ? 1 : 0,
-            v.config ? JSON.stringify(v.config).slice(0, 4096) : null,
+            v.variantId,
+            v.name,
+            v.weight,
+            v.isControl,
+            v.config,
           );
         }
       });
 
       return Response.json({ created: expId }, { status: 201 });
     } catch (err) {
-      if (err instanceof Error && err.message === "Invalid variant weight") {
+      // Only a duplicate ID (constraint violation) is a genuine conflict.
+      // Any other failure (locked/full disk, missing table, etc.) is a 500 so
+      // operators see a real error instead of a misleading 409.
+      if (err instanceof Error && /constraint failed/i.test(err.message)) {
         return Response.json(
-          {
-            error: "invalid_payload",
-            message: "Variant weight must be a finite positive number",
-          },
-          { status: 400 },
+          { error: "conflict", message: "Experiment already exists" },
+          { status: 409 },
         );
       }
+      console.error("[echelon] experiment creation failed:", err);
       return Response.json(
-        { error: "conflict", message: "Experiment creation failed" },
-        { status: 409 },
+        { error: "internal_error", message: "Experiment creation failed" },
+        { status: 500 },
       );
     }
   },

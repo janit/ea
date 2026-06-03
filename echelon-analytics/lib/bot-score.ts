@@ -93,20 +93,41 @@ function pruneMap(map: Map<string, number>, ttl: number): void {
   }
 }
 
+// When the cap is hit, evict down to this watermark (not just to the cap) so
+// the O(n) prune/eviction scan runs once per ~5k inserts rather than on every
+// insert — keeping the amortized cost of recording an IP O(1).
+const BOT_IP_MAP_WATERMARK = Math.floor(MAX_BOT_IP_MAP_SIZE * 0.9);
+
+/**
+ * Keep `map` at or below MAX_BOT_IP_MAP_SIZE. Prune TTL-expired entries first;
+ * if a flood of fresh entries still leaves it over the cap, evict the oldest
+ * entries (Map preserves insertion order) down to the watermark so the map can
+ * never grow unbounded.
+ */
+function enforceCap(map: Map<string, number>, ttl: number): void {
+  if (map.size <= MAX_BOT_IP_MAP_SIZE) return;
+  pruneMap(map, ttl);
+  if (map.size <= MAX_BOT_IP_MAP_SIZE) return;
+  let toRemove = map.size - BOT_IP_MAP_WATERMARK;
+  for (const k of map.keys()) {
+    if (toRemove-- <= 0) break;
+    map.delete(k);
+  }
+}
+
 /** Record an IP as suspected bot (e.g., bot UA leak on a non-tracking request). */
 export function recordSuspectedBotIp(ipHash: string): void {
-  if (suspectedBotIps.size > MAX_BOT_IP_MAP_SIZE) {
-    pruneMap(suspectedBotIps, SUSPECTED_TTL_MS);
-  }
+  // Refresh ordering so re-seen IPs aren't treated as oldest on eviction.
+  suspectedBotIps.delete(ipHash);
   suspectedBotIps.set(ipHash, Date.now());
+  enforceCap(suspectedBotIps, SUSPECTED_TTL_MS);
 }
 
 /** Record an IP as confirmed bot (correlator cluster evidence). */
 export function recordConfirmedBotIp(ipHash: string): void {
-  if (confirmedBotIps.size > MAX_BOT_IP_MAP_SIZE) {
-    pruneMap(confirmedBotIps, CONFIRMED_TTL_MS);
-  }
+  confirmedBotIps.delete(ipHash);
   confirmedBotIps.set(ipHash, Date.now());
+  enforceCap(confirmedBotIps, CONFIRMED_TTL_MS);
 }
 
 /** Get bot IP penalty: 50 for confirmed, 20 for suspected, 0 for unknown. */

@@ -3,6 +3,7 @@
 import type { DbAdapter } from "./db/adapter.ts";
 import type { ExperimentStats, VariantStats } from "../types.ts";
 import { terminalDisplayName } from "./anonymize.ts";
+import { RETENTION_DAYS } from "./config.ts";
 
 /**
  * A/B experiment results with two-proportion z-test significance.
@@ -135,25 +136,19 @@ export async function getOverview(
   const cutoff = daysAgoUTC(days);
   const today = new Date().toISOString().slice(0, 10);
 
-  // Exclude today from rollup queries to prevent double-counting when
-  // today's rollup already exists (e.g. via manual rollup or retry).
+  // All rollup-sourced queries exclude today (date < today) and the raw
+  // today figures are added back. This keeps the headline and every breakdown
+  // on one consistent window even when a stray today rollup row exists (e.g.
+  // via manual rollup or the maintenance retry path).
+  // avg_interaction_ms is visit-weighted (SUM(avg*visits)/SUM(visits)) — a
+  // plain AVG of per-row averages would ignore how many visits each row holds.
   const totals = await db.queryOne<{
     visits: number;
     avg_interaction_ms: number;
   }>(
     `SELECT COALESCE(SUM(visits), 0) AS visits,
-            COALESCE(CAST(AVG(avg_interaction_ms) AS INTEGER), 0) AS avg_interaction_ms
+            COALESCE(CAST(SUM(avg_interaction_ms * visits) / NULLIF(SUM(visits), 0) AS INTEGER), 0) AS avg_interaction_ms
      FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?`,
-    siteId,
-    cutoff,
-    today,
-  );
-
-  const rollupVisitors = await db.queryOne<{ unique_visitors: number }>(
-    `SELECT COALESCE(SUM(uv), 0) AS unique_visitors
-     FROM (SELECT date, MAX(unique_visitors) AS uv
-           FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?
-           GROUP BY date)`,
     siteId,
     cutoff,
     today,
@@ -162,15 +157,42 @@ export async function getOverview(
   const todayCutoff = today + "T00:00:00Z";
   const todayTotals = await db.queryOne<{
     visits: number;
-    unique_visitors: number;
   }>(
-    `SELECT COUNT(*) AS visits,
-            COUNT(DISTINCT visitor_id) AS unique_visitors
+    `SELECT COUNT(*) AS visits
      FROM visitor_views
      WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49`,
     siteId,
     todayCutoff,
   );
+
+  // Unique visitors over the period. Distinct counts are not additively
+  // composable from the per-(date,device,country,returning) rollup buckets —
+  // summing double-counts visitors active on multiple days, MAX-per-day drops
+  // visitors who only appear in non-largest buckets. When the whole window is
+  // still within raw retention we count distinct visitor_id from raw directly
+  // (exact). Beyond retention the raw rows are purged, so we fall back to the
+  // rollup estimate (sum of per-day distinct = "visitor-days").
+  let uniqueVisitors: number;
+  if (days <= RETENTION_DAYS) {
+    const u = await db.queryOne<{ unique_visitors: number }>(
+      `SELECT COUNT(DISTINCT visitor_id) AS unique_visitors
+       FROM visitor_views
+       WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49`,
+      siteId,
+      cutoff + "T00:00:00Z",
+    );
+    uniqueVisitors = u?.unique_visitors ?? 0;
+  } else {
+    const rollupVisitors = await db.queryOne<{ unique_visitors: number }>(
+      `SELECT COALESCE(SUM(uv), 0) AS unique_visitors
+       FROM (SELECT date, MAX(unique_visitors) AS uv
+             FROM visitor_views_daily WHERE site_id = ? AND date >= ?
+             GROUP BY date)`,
+      siteId,
+      cutoff,
+    );
+    uniqueVisitors = rollupVisitors?.unique_visitors ?? 0;
+  }
 
   // Limit path scan to max 7 days of raw data for performance
   const pathCutoff = daysAgoUTC(Math.min(days, 7));
@@ -188,10 +210,11 @@ export async function getOverview(
 
   const devices = await db.query<{ device_type: string; visits: number }>(
     `SELECT device_type, SUM(visits) AS visits
-     FROM visitor_views_daily WHERE site_id = ? AND date >= ?
+     FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?
      GROUP BY device_type ORDER BY visits DESC`,
     siteId,
     cutoff,
+    today,
   );
 
   const countries = await db.query<{
@@ -200,10 +223,11 @@ export async function getOverview(
     visitors: number;
   }>(
     `SELECT country_code, SUM(visits) AS visits, SUM(unique_visitors) AS visitors
-     FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND country_code != 'unknown'
+     FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ? AND country_code != 'unknown'
      GROUP BY country_code ORDER BY visits DESC LIMIT 10`,
     siteId,
     cutoff,
+    today,
   );
 
   // Limit referrer scan to max 7 days of raw data for performance
@@ -259,18 +283,18 @@ export async function getOverview(
     visitors: number;
   }>(
     `SELECT date, SUM(visits) AS visits, SUM(unique_visitors) AS visitors
-     FROM visitor_views_daily WHERE site_id = ? AND date >= ?
+     FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?
      GROUP BY date ORDER BY date`,
     siteId,
     cutoff,
+    today,
   );
 
   return {
     site_id: siteId,
     period_days: days,
     visits: (totals?.visits ?? 0) + (todayTotals?.visits ?? 0),
-    unique_visitors: (rollupVisitors?.unique_visitors ?? 0) +
-      (todayTotals?.unique_visitors ?? 0),
+    unique_visitors: uniqueVisitors,
     avg_interaction_ms: totals?.avg_interaction_ms ?? 0,
     top_paths: topPaths,
     devices,

@@ -108,6 +108,69 @@ Deno.test("rollupDay — idempotent (INSERT OR REPLACE)", async () => {
   await db.close();
 });
 
+Deno.test("rollupDay — re-rollup clears aggregates when a whole group turns to bots", async () => {
+  // Regression: bot correlator retroactively flags an entire group as bots
+  // after the first rollup. A re-rollup must DELETE the now-empty daily row,
+  // not leave the stale clean-visit aggregate behind. INSERT OR REPLACE alone
+  // cannot do this because the group vanishes from the SELECT.
+  const db = createTestDb();
+  const ts = `${YESTERDAY}T12:00:00.000Z`;
+  for (const id of ["v1", "v2", "v3"]) {
+    await insertView(db, {
+      visitor_id: id,
+      device_type: "desktop",
+      country_code: "NO",
+      created_at: ts,
+    });
+  }
+
+  await rollupDay(db, YESTERDAY);
+  const before = await db.queryOne<{ visits: number }>(
+    "SELECT COALESCE(SUM(visits), 0) AS visits FROM visitor_views_daily WHERE date = ?",
+    YESTERDAY,
+  );
+  assertEquals(before?.visits, 3);
+
+  // Correlator flags every view as a bot after the fact.
+  await db.run(
+    "UPDATE visitor_views SET bot_score = 70 WHERE date(created_at) = ?",
+    YESTERDAY,
+  );
+
+  await rollupDay(db, YESTERDAY);
+  const after = await db.queryOne<{ visits: number }>(
+    "SELECT COALESCE(SUM(visits), 0) AS visits FROM visitor_views_daily WHERE date = ?",
+    YESTERDAY,
+  );
+  assertEquals(after?.visits, 0);
+  await db.close();
+});
+
+Deno.test("rollupDay — re-rollup of one date leaves other dates untouched", async () => {
+  const db = createTestDb();
+  const otherDate = "2024-01-01";
+  await insertView(db, {
+    visitor_id: "keep",
+    created_at: `${otherDate}T10:00:00.000Z`,
+  });
+  await insertView(db, {
+    visitor_id: "v1",
+    created_at: `${YESTERDAY}T12:00:00.000Z`,
+  });
+
+  await rollupDay(db, otherDate);
+  await rollupDay(db, YESTERDAY);
+  // Re-rollup YESTERDAY only; otherDate's row must survive.
+  await rollupDay(db, YESTERDAY);
+
+  const other = await db.queryOne<{ visits: number }>(
+    "SELECT COALESCE(SUM(visits), 0) AS visits FROM visitor_views_daily WHERE date = ?",
+    otherDate,
+  );
+  assertEquals(other?.visits, 1);
+  await db.close();
+});
+
 Deno.test("rollupDay — groups by device_type and country_code", async () => {
   const db = createTestDb();
   const ts = `${YESTERDAY}T12:00:00.000Z`;

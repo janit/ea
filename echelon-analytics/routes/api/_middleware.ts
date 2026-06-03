@@ -61,7 +61,10 @@ export const handler = define.handlers([
         // Compare origin *host* against the request Host header — this works
         // behind any reverse proxy without needing x-forwarded-proto, since
         // protocol mismatches (http internal vs https external) don't affect
-        // the host comparison and the Host header is always forwarded.
+        // the host comparison. This assumes the proxy preserves the external
+        // Host header (Caddy/nginx defaults do); a proxy that rewrites Host to
+        // an internal name would reject legitimate same-origin POSTs, not open
+        // a bypass.
         const method = ctx.req.method;
         if (
           method === "POST" || method === "PUT" || method === "PATCH" ||

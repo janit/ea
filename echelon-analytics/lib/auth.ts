@@ -55,8 +55,17 @@ export async function verifyPassword(
   const iterations = parseInt(parts[1], 10);
   if (!iterations || iterations < 1 || iterations > 10_000_000) return false;
 
-  const salt = fromBase64(parts[2]);
-  const expected = fromBase64(parts[3]);
+  // A malformed (non-base64) stored hash must reject cleanly, not throw —
+  // otherwise an operator typo in ECHELON_PASSWORD_HASH 500s every login.
+  let salt: Uint8Array;
+  let expected: Uint8Array;
+  try {
+    salt = fromBase64(parts[2]);
+    expected = fromBase64(parts[3]);
+  } catch {
+    return false;
+  }
+  if (salt.byteLength === 0 || expected.byteLength === 0) return false;
   const actual = new Uint8Array(await deriveKey(password, salt, iterations));
 
   if (expected.byteLength !== actual.byteLength) return false;

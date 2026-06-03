@@ -3,6 +3,7 @@ import {
   classifyDevice,
   classifyReferrer,
   computeBotScore,
+  getBotIpPenalty,
   getBurstCount,
   hashIp,
   hashVisitor,
@@ -10,8 +11,27 @@ import {
   parseBrowser,
   parseOS,
   recordBurst,
+  recordConfirmedBotIp,
 } from "@/lib/bot-score.ts";
 import type { BotScoreSignals } from "@/types.ts";
+
+// ── Bot IP map hard cap ───────────────────────────────────────────────────────
+
+Deno.test("recordConfirmedBotIp — enforces a hard cap by evicting oldest entries", () => {
+  // Regression: pruneMap only removes TTL-expired entries. Under a flood of
+  // fresh (non-expired) distinct IPs the map must still stay bounded by
+  // evicting the OLDEST entries, or it grows without limit and every insert
+  // becomes an O(n) scan. Cap is 50_000; insert well past it with fresh hashes.
+  const TOTAL = 60_000;
+  for (let i = 0; i < TOTAL; i++) {
+    recordConfirmedBotIp(`capfill-${i}`);
+  }
+  // The earliest-inserted entries should have been evicted (penalty 0)…
+  assertEquals(getBotIpPenalty("capfill-0"), 0);
+  assertEquals(getBotIpPenalty("capfill-100"), 0);
+  // …while the most-recent entries are retained (penalty 50).
+  assertEquals(getBotIpPenalty(`capfill-${TOTAL - 1}`), 50);
+});
 
 // ── isKnownBot ──────────────────────────────────────────────────────────────
 

@@ -24,8 +24,12 @@ function daysAgoUTC(days: number): string {
 /**
  * Aggregate yesterday's visitor_views into visitor_views_daily.
  * Filters: bot_score BETWEEN 0 AND 49, not in excluded_visitors.
- * Idempotent via INSERT OR REPLACE on the composite key — re-rollups
- * after bot correlator corrections update stale aggregates.
+ *
+ * Re-runnable: deletes the target date's existing daily rows and re-inserts,
+ * atomically in a transaction. This is required (rather than INSERT OR REPLACE
+ * alone) so that re-rollups after bot correlator corrections also clear groups
+ * that fully converted to bots — those vanish from the SELECT and would
+ * otherwise leave a stale clean-visit aggregate behind forever.
  */
 export async function rollupDay(
   db: DbAdapter,
@@ -39,40 +43,46 @@ export async function rollupDay(
   console.log(`[echelon] rollup: aggregating visitor_views for ${date}`);
   const start = Date.now();
 
-  const result = await db.run(
-    `INSERT OR REPLACE INTO visitor_views_daily
-      (site_id, date, device_type, country_code, is_returning,
-       visits, unique_visitors, avg_interaction_ms)
-    SELECT
-      site_id,
-      ? AS date,
-      COALESCE(device_type, 'unknown'),
-      COALESCE(country_code, 'unknown'),
-      is_returning,
-      COUNT(*),
-      COUNT(DISTINCT visitor_id),
-      COALESCE(CAST(AVG(CASE WHEN interaction_ms > 0 THEN interaction_ms END) AS INTEGER), 0)
-    FROM visitor_views
-    WHERE (created_at >= (? || 'T00:00:00.000Z'))
-      AND (created_at < (date(?, '+1 day') || 'T00:00:00.000Z'))
-      AND (bot_score BETWEEN 0 AND 49)
-      AND NOT EXISTS (
-        SELECT 1 FROM excluded_visitors ev
-        WHERE ev.visitor_id = visitor_views.visitor_id
-      )
-    GROUP BY site_id, COALESCE(device_type, 'unknown'),
-             COALESCE(country_code, 'unknown'), is_returning`,
-    date,
-    date,
-    date,
-  );
+  const changes = await db.transaction(async (tx) => {
+    // Clear this date's prior aggregates so vanished groups don't linger.
+    await tx.run(`DELETE FROM visitor_views_daily WHERE date = ?`, date);
+
+    const result = await tx.run(
+      `INSERT INTO visitor_views_daily
+        (site_id, date, device_type, country_code, is_returning,
+         visits, unique_visitors, avg_interaction_ms)
+      SELECT
+        site_id,
+        ? AS date,
+        COALESCE(device_type, 'unknown'),
+        COALESCE(country_code, 'unknown'),
+        is_returning,
+        COUNT(*),
+        COUNT(DISTINCT visitor_id),
+        COALESCE(CAST(AVG(CASE WHEN interaction_ms > 0 THEN interaction_ms END) AS INTEGER), 0)
+      FROM visitor_views
+      WHERE (created_at >= (? || 'T00:00:00.000Z'))
+        AND (created_at < (date(?, '+1 day') || 'T00:00:00.000Z'))
+        AND (bot_score BETWEEN 0 AND 49)
+        AND NOT EXISTS (
+          SELECT 1 FROM excluded_visitors ev
+          WHERE ev.visitor_id = visitor_views.visitor_id
+        )
+      GROUP BY site_id, COALESCE(device_type, 'unknown'),
+               COALESCE(country_code, 'unknown'), is_returning`,
+      date,
+      date,
+      date,
+    );
+    return result.changes;
+  });
 
   console.log(
     `[echelon] rollup: completed for ${date} in ${
       Date.now() - start
-    }ms (${result.changes} rows)`,
+    }ms (${changes} rows)`,
   );
-  return result.changes;
+  return changes;
 }
 
 /**

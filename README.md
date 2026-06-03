@@ -463,7 +463,7 @@ since they require Chromium.
 ## Tech Stack
 
 - **Runtime:** Deno
-- **Framework:** Fresh 2.2.0 (Preact)
+- **Framework:** Fresh 2.3.3 (Preact)
 - **Database:** SQLite (WAL mode) via Deno's built-in `node:sqlite`
 - **Frontend:** Preact islands with `@preact/signals`, Tailwind CSS v4
 - **Build:** Vite 7

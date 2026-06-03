@@ -7,11 +7,14 @@ import {
   getOverview,
   getRealtime,
 } from "@/lib/stats.ts";
+import { rollupDay } from "@/lib/maintenance.ts";
 import {
   createTestDb,
   insertDailyRollup,
   insertEvent,
   insertView,
+  TODAY,
+  WEEK_AGO,
   YESTERDAY,
 } from "./_helpers.ts";
 
@@ -82,6 +85,91 @@ Deno.test("getOverview — excludes bot views from today's count", async () => {
   const result = await getOverview(db, "test-site", 30);
   // Bot views (score >= 50) should be excluded from today count
   assertEquals(result.visits, 1);
+  await db.close();
+});
+
+Deno.test("getOverview — breakdowns exclude a stray today rollup row (headline/breakdown consistency)", async () => {
+  // Regression: headline counts today from raw, so breakdowns must NOT also
+  // count today from the rollup table (a today row can exist via retry/manual
+  // rollup). Otherwise the two disagree.
+  const db = createTestDb();
+  await insertDailyRollup(db, {
+    date: YESTERDAY,
+    visits: 5,
+    unique_visitors: 5,
+  });
+  // A stray rollup row for today (e.g. from the maintenance retry path).
+  await insertDailyRollup(db, {
+    date: TODAY,
+    visits: 999,
+    unique_visitors: 999,
+  });
+  await insertView(db, { visitor_id: "today-1" }); // 1 raw view today
+
+  const result = await getOverview(db, "test-site", 30);
+  // Headline: 5 (yesterday rollup) + 1 (raw today) = 6. The stray 999 must not leak in.
+  assertEquals(result.visits, 6);
+  // daily_trend must not contain a today bar sourced from the stray rollup row.
+  assertEquals(result.daily_trend.some((d) => d.date === TODAY), false);
+  await db.close();
+});
+
+Deno.test("getOverview — avg_interaction_ms is visit-weighted, not mean-of-means", async () => {
+  const db = createTestDb();
+  // 1 visit @ 1000ms and 99 visits @ 100ms → weighted mean = 109, not 550.
+  await insertDailyRollup(db, {
+    date: YESTERDAY,
+    device_type: "desktop",
+    visits: 1,
+    avg_interaction_ms: 1000,
+  });
+  await insertDailyRollup(db, {
+    date: WEEK_AGO,
+    device_type: "mobile",
+    visits: 99,
+    avg_interaction_ms: 100,
+  });
+
+  const result = await getOverview(db, "test-site", 30);
+  assertEquals(result.avg_interaction_ms, 109);
+  await db.close();
+});
+
+Deno.test("getOverview — unique_visitors dedups a visitor active across multiple days", async () => {
+  const db = createTestDb();
+  // alice visits yesterday (rolled up) and again today (raw). She is ONE person.
+  await insertView(db, {
+    visitor_id: "alice",
+    created_at: `${YESTERDAY}T10:00:00.000Z`,
+  });
+  await rollupDay(db, YESTERDAY);
+  await insertView(db, {
+    visitor_id: "alice",
+    created_at: new Date().toISOString(),
+  });
+
+  const result = await getOverview(db, "test-site", 30);
+  assertEquals(result.unique_visitors, 1);
+  await db.close();
+});
+
+Deno.test("getOverview — unique_visitors counts a visitor split across device buckets once", async () => {
+  const db = createTestDb();
+  // bob has views in two device buckets the same day → still ONE unique visitor.
+  await insertView(db, {
+    visitor_id: "bob",
+    device_type: "desktop",
+    created_at: `${YESTERDAY}T09:00:00.000Z`,
+  });
+  await insertView(db, {
+    visitor_id: "bob",
+    device_type: "mobile",
+    created_at: `${YESTERDAY}T11:00:00.000Z`,
+  });
+  await rollupDay(db, YESTERDAY);
+
+  const result = await getOverview(db, "test-site", 30);
+  assertEquals(result.unique_visitors, 1);
   await db.close();
 });
 

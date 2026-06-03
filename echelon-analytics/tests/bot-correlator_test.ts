@@ -81,6 +81,49 @@ Deno.test({
 });
 
 Deno.test({
+  name:
+    "bot-correlator — all-unknown fingerprints are NOT clustered (privacy-user false positive)",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+
+    // 8 unrelated privacy-hardened users (Tor/Lockdown/etc.) whose UA, screen,
+    // country and Accept-Language all failed to parse → identical "unknown"
+    // fingerprint. They share nothing but absence-of-data and must NOT be
+    // flagged as a bot farm.
+    const unknownFp: Fingerprint = {
+      osName: "unknown",
+      browserName: "unknown",
+      browserVersion: "unknown",
+      screenWidth: 0,
+      screenHeight: 0,
+      countryCode: "unknown",
+      acceptLanguage: "unknown",
+    };
+    for (let i = 0; i < 8; i++) {
+      const vid = `priv_user_${i}`.padEnd(16, "0");
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: "south-africa.afroute.com",
+        bot_score: 0,
+      });
+      recordPrint(
+        makePrint(`ip_hash_${i}`, vid, { fingerprint: unknownFp }),
+      );
+    }
+
+    await sweep(db);
+
+    const rows = await db.query<{ bot_score: number }>(
+      "SELECT bot_score FROM visitor_views",
+    );
+    for (const r of rows) {
+      assertEquals(r.bot_score, 0);
+    }
+  },
+});
+
+Deno.test({
   name: "bot-correlator — cluster at threshold → updates bot_score",
   async fn() {
     cleanup();

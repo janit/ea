@@ -55,7 +55,7 @@ tagging — so tests gate every release.
 
 ### Runtime & Framework
 
-Deno + Fresh 2.2.2 (file-system routing with Preact islands). Vite 7 for builds.
+Deno + Fresh 2.3.3 (file-system routing with Preact islands). Vite 7 for builds.
 Tailwind CSS v4 configured via `@tailwindcss/vite` plugin (config lives in
 `assets/styles.css`, not a tailwind config file). Dark terminal aesthetic:
 Professional palette (navy/white/red), Inter sans-serif font. Alternative themes

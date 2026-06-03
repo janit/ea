@@ -60,8 +60,9 @@ export const handler = define.handlers([
         ctx.state.isAuthenticated = true;
 
         // CSRF protection for mutating requests.
-        // Compare origin *host* against the request Host header — works
-        // behind any reverse proxy without needing x-forwarded-proto.
+        // Compare origin *host* against the request Host header — works behind
+        // any reverse proxy without needing x-forwarded-proto. Assumes the
+        // proxy preserves the external Host header (Caddy/nginx defaults do).
         const method = ctx.req.method;
         if (
           method === "POST" || method === "PUT" || method === "PATCH" ||
