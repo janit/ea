@@ -178,7 +178,8 @@ function mergeRangesV6(
 ): [bigint, bigint][] {
   if (ranges.length === 0) return [];
   ranges.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const merged: [bigint, bigint][] = [ranges[0]];
+  // Copy the seed tuple — see mergeRanges().
+  const merged: [bigint, bigint][] = [[ranges[0][0], ranges[0][1]]];
   for (let i = 1; i < ranges.length; i++) {
     const prev = merged[merged.length - 1];
     const [start, end] = ranges[i];
@@ -218,7 +219,9 @@ function mergeRanges(
 ): [number, number][] {
   if (ranges.length === 0) return [];
   ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const merged: [number, number][] = [ranges[0]];
+  // Copy the seed tuple — mutating prev[1] below would otherwise write
+  // through into the caller's per-feed array, which outlives this merge.
+  const merged: [number, number][] = [[ranges[0][0], ranges[0][1]]];
   for (let i = 1; i < ranges.length; i++) {
     const prev = merged[merged.length - 1];
     const [start, end] = ranges[i];
@@ -487,19 +490,6 @@ export function stopThreatFeeds(): void {
   gcpV4Ranges = [];
   gcpV6Ranges = [];
   dcRangeCount = 0;
-}
-
-/** Current feed stats for admin/debugging. */
-export function getThreatFeedStats(): {
-  crawlerPatterns: number;
-  aiCrawlerNames: number;
-  datacenterRanges: number;
-} {
-  return {
-    crawlerPatterns: crawlerPatternCount,
-    aiCrawlerNames: aiCrawlerNameCount,
-    datacenterRanges: dcRangeCount,
-  };
 }
 
 // ── Exported for testing ────────────────────────────────────────────────────

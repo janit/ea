@@ -1,4 +1,6 @@
 import { define } from "../../../utils.ts";
+import { decodeParam } from "../../../lib/request.ts";
+import { readJsonObject } from "../../../lib/request.ts";
 import { markStale, refreshUtmCampaigns } from "../../../lib/utm.ts";
 
 const VALID_STATUSES = new Set(["active", "paused", "archived"]);
@@ -6,12 +8,17 @@ const VALID_STATUSES = new Set(["active", "paused", "archived"]);
 export const handler = define.handlers({
   async PATCH(ctx) {
     const db = ctx.state.db;
-    const campaignId = decodeURIComponent(ctx.params.id).slice(0, 128);
+    const rawId = decodeParam(ctx.params.id);
+    if (rawId === null) {
+      return Response.json(
+        { error: "invalid_id", message: "Malformed campaign ID" },
+        { status: 400 },
+      );
+    }
+    const campaignId = rawId.slice(0, 128);
 
-    let body: Record<string, unknown>;
-    try {
-      body = (await ctx.req.json()) as Record<string, unknown>;
-    } catch {
+    const body = await readJsonObject(ctx.req);
+    if (!body) {
       return Response.json(
         { error: "invalid_payload", message: "Invalid JSON" },
         { status: 400 },
@@ -50,7 +57,14 @@ export const handler = define.handlers({
 
   async DELETE(ctx) {
     const db = ctx.state.db;
-    const campaignId = decodeURIComponent(ctx.params.id).slice(0, 128);
+    const rawId = decodeParam(ctx.params.id);
+    if (rawId === null) {
+      return Response.json(
+        { error: "invalid_id", message: "Malformed campaign ID" },
+        { status: 400 },
+      );
+    }
+    const campaignId = rawId.slice(0, 128);
 
     const result = await db.run(
       `DELETE FROM utm_campaigns WHERE id = ?`,

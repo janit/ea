@@ -157,6 +157,17 @@ export async function flushRemainingEvents(db: DbAdapter): Promise<void> {
   await eventWriter.stop(db);
 }
 
+/** Writer health for the health endpoint. Healthy = nothing failed or dropped. */
+export function getEventWriterHealth(): {
+  failedCycles: number;
+  dropped: number;
+} {
+  return {
+    failedCycles: eventWriter.failedCycles,
+    dropped: eventWriter.droppedCount,
+  };
+}
+
 export function getEventBufferSize(): number {
   return eventWriter.size;
 }

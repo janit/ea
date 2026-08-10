@@ -25,9 +25,17 @@ export interface E2EContext {
  * For simpler testing, we launch the browser against the dev server.
  */
 export async function setupE2E(): Promise<E2EContext> {
-  // Launch headless browser
+  // Launch headless browser. Astral auto-discovers a Chromium, but that can
+  // pick a snap-confined binary that refuses to boot — set E2E_CHROME_PATH to
+  // point at a known-good executable.
+  // E2E_CHROME_NO_SANDBOX=1 is needed where the kernel blocks Chromium's
+  // sandbox (containers, some hardened hosts).
+  const chromePath = Deno.env.get("E2E_CHROME_PATH");
+  const noSandbox = Deno.env.get("E2E_CHROME_NO_SANDBOX") === "1";
   const browser = await launch({
     headless: true,
+    ...(chromePath ? { path: chromePath } : {}),
+    ...(noSandbox ? { args: ["--no-sandbox"] } : {}),
   });
   const page = await browser.newPage();
 

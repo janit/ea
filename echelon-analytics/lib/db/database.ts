@@ -42,14 +42,27 @@ async function _initDb(): Promise<DbAdapter> {
   raw.exec("PRAGMA temp_store = MEMORY");
   raw.exec("PRAGMA auto_vacuum = INCREMENTAL");
 
-  // Create schema
-  raw.exec(SCHEMA_SQL);
+  // Create schema. DatabaseSync.exec() is not atomic — without this wrapper a
+  // failure part-way through leaves the statements before it committed. SQLite
+  // DDL is transactional, so BEGIN/COMMIT makes initialization all-or-nothing.
+  raw.exec("BEGIN");
+  try {
+    raw.exec(SCHEMA_SQL);
+    raw.exec("COMMIT");
+  } catch (e) {
+    raw.exec("ROLLBACK");
+    throw e;
+  }
 
-  db = new SqliteAdapter(raw);
+  const adapter = new SqliteAdapter(raw);
 
-  // Migrations for existing databases
-  await migrate(db);
+  // Migrations for existing databases. Assign the module singleton only after
+  // this succeeds: `db` was previously set first, so a failed migration left a
+  // half-migrated adapter that the next initDb() call returned from its
+  // `if (db)` fast path.
+  await migrate(adapter);
 
+  db = adapter;
   console.log(`[echelon] Database initialized: ${DB_PATH}`);
   return db;
 }

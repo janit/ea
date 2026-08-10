@@ -304,6 +304,17 @@ async function penalizeNoEventBounces(db: DbAdapter): Promise<void> {
          SELECT 1 FROM semantic_events se
          WHERE se.visitor_id = visitor_views.visitor_id
            AND se.site_id = visitor_views.site_id
+           -- Scope to THIS view, not "has this visitor ever done anything".
+           -- Unscoped, a single event shielded every other view by the same
+           -- visitor — for the 30-day lifetime of the _ev cookie — and an
+           -- event the scorer itself rated as a bot counted as proof of a
+           -- human. strftime (not datetime) keeps the ISO format that
+           -- created_at uses; datetime() yields a space separator that sorts
+           -- before 'T', making the comparison silently always false.
+           AND se.created_at >= visitor_views.created_at
+           AND se.created_at <=
+             strftime('%Y-%m-%dT%H:%M:%fZ', visitor_views.created_at, '+5 minutes')
+           AND se.bot_score BETWEEN 0 AND 49
        )`,
     NO_EVENTS_PENALTY,
     windowStart,

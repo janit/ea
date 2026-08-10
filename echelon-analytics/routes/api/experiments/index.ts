@@ -1,4 +1,5 @@
 import { define } from "../../../utils.ts";
+import { isPlainObject, readJsonObject } from "../../../lib/request.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -10,10 +11,8 @@ export const handler = define.handlers({
 
   async POST(ctx) {
     const db = ctx.state.db;
-    let body: Record<string, unknown>;
-    try {
-      body = (await ctx.req.json()) as Record<string, unknown>;
-    } catch {
+    const body = await readJsonObject(ctx.req);
+    if (!body) {
       return Response.json(
         { error: "invalid_payload", message: "Invalid JSON" },
         { status: 400 },
@@ -65,6 +64,16 @@ export const handler = define.handlers({
     // transaction's catch block is left to deal with real DB errors only.
     const preparedVariants = [];
     for (const v of variantList) {
+      // Array.isArray() says nothing about element types — [null] reaches here.
+      if (!isPlainObject(v)) {
+        return Response.json(
+          {
+            error: "invalid_payload",
+            message: "Each variant must be an object",
+          },
+          { status: 400 },
+        );
+      }
       const weight = Number(v.weight);
       if (!Number.isFinite(weight) || weight <= 0) {
         return Response.json(
@@ -82,6 +91,20 @@ export const handler = define.handlers({
         isControl: v.is_control ? 1 : 0,
         config: v.config ? JSON.stringify(v.config).slice(0, 4096) : null,
       });
+    }
+
+    // A duplicate variant_id violates PRIMARY KEY (experiment_id, variant_id),
+    // which the catch below would report as "Experiment already exists" —
+    // pointing the operator at a field that is not the problem.
+    const variantIds = preparedVariants.map((v) => v.variantId);
+    if (new Set(variantIds).size !== variantIds.length) {
+      return Response.json(
+        {
+          error: "invalid_payload",
+          message: "Variant IDs must be unique within an experiment",
+        },
+        { status: 400 },
+      );
     }
 
     try {

@@ -5,6 +5,8 @@
 
 import { BEHIND_CLOUDFLARE, TRUST_PROXY } from "./config.ts";
 
+let warnedProxy = false;
+
 /**
  * Extract the real client IP from a request, respecting proxy trust settings.
  * Returns "unknown" when no trusted source is available.
@@ -14,6 +16,21 @@ export function getClientIp(req: Request): string {
   if (BEHIND_CLOUDFLARE) {
     const cfIp = req.headers.get("cf-connecting-ip");
     if (cfIp) return cfIp.trim();
+  }
+
+  // Diagnose the misconfiguration that silently collapses every client into a
+  // single bucket: a proxy is forwarding, but we are not configured to trust
+  // it, so every request resolves to the proxy's address. That makes the login
+  // limiter instance-wide (5 anonymous failures lock out the administrator)
+  // and the tracking limiter instance-wide too. Warn once — it is invisible
+  // otherwise, and the shipped Caddyfile puts a proxy in front by default.
+  if (!TRUST_PROXY && !warnedProxy && req.headers.get("x-forwarded-for")) {
+    warnedProxy = true;
+    console.warn(
+      "[echelon] WARNING: X-Forwarded-For seen but ECHELON_TRUST_PROXY is not set. " +
+        "All clients will share one rate-limit bucket. Set ECHELON_TRUST_PROXY=true " +
+        "if a reverse proxy is in front of this instance.",
+    );
   }
 
   // Proxy headers — only when behind a trusted reverse proxy

@@ -30,13 +30,31 @@ export default function ExperimentForm(
 
   if (readOnly) return null;
 
+  // a..z then aa, ab, … — String.fromCharCode(97 + n) walked past 'z' into
+  // '{', '|', '}' once enough variants were added.
+  function letter(n: number): string {
+    let out = "";
+    n += 1;
+    while (n > 0) {
+      n -= 1;
+      out = String.fromCharCode(97 + (n % 26)) + out;
+      n = Math.floor(n / 26);
+    }
+    return out;
+  }
+
   function addVariant() {
-    const idx = variants.value.length;
+    // Derive from the ids actually in use, not from array length: after
+    // removing a middle variant, length-based naming re-minted an id that was
+    // still present, which violates PRIMARY KEY (experiment_id, variant_id).
+    const used = new Set(variants.value.map((v) => v.variant_id));
+    let suffix = 0;
+    while (used.has(`variant-${letter(suffix)}`)) suffix++;
     variants.value = [
       ...variants.value,
       {
-        variant_id: `variant-${String.fromCharCode(97 + idx - 1)}`,
-        name: `Variant ${String.fromCharCode(65 + idx - 1)}`,
+        variant_id: `variant-${letter(suffix)}`,
+        name: `Variant ${letter(suffix).toUpperCase()}`,
         weight: 50,
         is_control: false,
       },

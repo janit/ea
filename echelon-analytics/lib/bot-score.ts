@@ -23,25 +23,51 @@ export function isKnownBot(ua: string | undefined): boolean {
 
 // ── Ephemeral HMAC key (daily rotation) ─────────────────────────────────────
 
-let hmacKey: CryptoKey;
-let keyCreatedAt = 0;
-const KEY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// The key is memoized as a *promise*, not as the resolved CryptoKey. Checking
+// `!hmacKey` and then awaiting importKey() let two callers in the same tick
+// both enter the branch and generate different keys, so the same IP hashed to
+// two values — splitting visitor IDs, burst counters and both bot IP maps.
+let hmacKeyPromise: Promise<CryptoKey> | null = null;
+// Rotation is anchored to the UTC date, not to process start. hashVisitor()
+// already mixes the UTC date into its input and promises "same visitor on the
+// same day = same ID"; a 24h timer started at the first request rotated the
+// key mid-day for any process not started exactly at 00:00 UTC, double-counting
+// that day's unique visitors and splitting every correlator cluster.
+let hmacKeyDate = "";
 
-async function getHmacKey(): Promise<CryptoKey> {
-  const now = Date.now();
-  if (!hmacKey || now - keyCreatedAt > KEY_TTL_MS) {
-    const raw = crypto.getRandomValues(new Uint8Array(32));
-    hmacKey = await crypto.subtle.importKey(
-      "raw",
-      raw,
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
-    keyCreatedAt = now;
-    burstMap.clear();
-  }
-  return hmacKey;
+function getHmacKey(): Promise<CryptoKey> {
+  const today = new Date().toISOString().slice(0, 10);
+  if (hmacKeyPromise && hmacKeyDate === today) return hmacKeyPromise;
+
+  hmacKeyDate = today;
+  const pending = crypto.subtle.importKey(
+    "raw",
+    crypto.getRandomValues(new Uint8Array(32)),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  ).catch((err) => {
+    // Never leave a rejected promise memoized — that would wedge every
+    // subsequent hash for the life of the process.
+    if (hmacKeyPromise === pending) hmacKeyPromise = null;
+    throw err;
+  });
+  hmacKeyPromise = pending;
+
+  // Every key in these maps is an IP hash under the *previous* key, so they are
+  // unreachable after rotation. Clear them rather than leak dead entries
+  // against the size caps.
+  //
+  // Tradeoff: an entry set in the last hour before UTC midnight loses its
+  // penalty early. That is bounded by the map TTLs (30 min / 1 h), which are
+  // far shorter than the 24h rotation, so at most one hour of scoring state is
+  // affected once per day. Keying these maps on a rotation-stable hash would
+  // preserve them, but a stable IP hash is exactly what the rotation exists to
+  // prevent.
+  burstMap.clear();
+  suspectedBotIps.clear();
+  confirmedBotIps.clear();
+  return hmacKeyPromise;
 }
 
 /** Hash an IP address to a hex string using the daily-rotating HMAC key. */

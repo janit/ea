@@ -1,4 +1,5 @@
 import { define } from "../../utils.ts";
+import { readJsonObject } from "../../lib/request.ts";
 import { TELEMETRY_OVERRIDE } from "../../lib/config.ts";
 import { getTelemetryState, setTelemetryChoice } from "../../lib/telemetry.ts";
 
@@ -22,10 +23,8 @@ export const handler = define.handlers({
       );
     }
 
-    let body: Record<string, unknown>;
-    try {
-      body = await ctx.req.json();
-    } catch {
+    const body = await readJsonObject(ctx.req);
+    if (!body) {
       return Response.json(
         { error: "invalid_body", message: "Invalid JSON body" },
         { status: 400 },

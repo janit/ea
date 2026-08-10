@@ -574,7 +574,7 @@ docker build -f confs/Dockerfile -t echelon .
 docker run -p 1947:1947 -v echelon-data:/app/data echelon
 ```
 
-The Dockerfile uses a multi-stage build (Deno 2.7.12), runs as a non-root
+The Dockerfile uses a multi-stage build (Deno 2.9.5), runs as a non-root
 `echelon` user, and includes a health check. Mount a volume at `/app/data` for
 the SQLite database.
 

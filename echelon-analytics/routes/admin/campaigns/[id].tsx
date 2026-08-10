@@ -1,5 +1,6 @@
 import { page } from "fresh";
 import { define } from "../../../utils.ts";
+import { decodeParam } from "../../../lib/request.ts";
 import { AdminNav } from "../../../components/AdminNav.tsx";
 import { getLiveStats } from "../../../lib/admin-stats.ts";
 import { getCampaignDetail, getCampaignStats } from "../../../lib/stats.ts";
@@ -10,7 +11,11 @@ import { formatTime } from "../../../lib/format.ts";
 export const handler = define.handlers({
   async GET(ctx) {
     const db = ctx.state.db;
-    const campaignId = decodeURIComponent(ctx.params.id);
+    const campaignId = decodeParam(ctx.params.id);
+    // A malformed percent-escape cannot match any stored ID.
+    if (campaignId === null) {
+      return new Response("Campaign not found", { status: 404 });
+    }
 
     const campaign = await db.queryOne<Record<string, unknown>>(
       `SELECT * FROM utm_campaigns WHERE id = ?`,

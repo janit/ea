@@ -40,6 +40,38 @@ export async function rollupDay(
     throw new Error(`rollup: invalid date format: ${date}`);
   }
 
+  // visitor_views_daily is kept for 730 days but visitor_views only for 90, so
+  // the rollup is recomputable for a far shorter window than it retains. If the
+  // source rows for this date are gone, the unconditional DELETE below would
+  // destroy a good aggregate and re-insert nothing — permanently losing the
+  // only remaining copy.
+  //
+  // Guard on the source actually being empty rather than on the retention
+  // window, so an explicit re-roll of an older date still works while a purged
+  // date is left intact. Counting raw rows regardless of bot_score is
+  // deliberate: a day whose views all became bots after correlator corrections
+  // must still clear its stale clean-visit aggregate.
+  const src = await db.queryOne<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM visitor_views
+     WHERE (created_at >= (? || 'T00:00:00.000Z'))
+       AND (created_at < (date(?, '+1 day') || 'T00:00:00.000Z'))`,
+    date,
+    date,
+  );
+  if ((src?.n ?? 0) === 0) {
+    const existing = await db.queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM visitor_views_daily WHERE date = ?`,
+      date,
+    );
+    if ((existing?.n ?? 0) > 0) {
+      console.warn(
+        `[echelon] rollup: ${date} has no raw rows but ${existing?.n} aggregate ` +
+          `row(s) — leaving them intact (raw data purged; cannot be rebuilt)`,
+      );
+      return 0;
+    }
+  }
+
   console.log(`[echelon] rollup: aggregating visitor_views for ${date}`);
   const start = Date.now();
 
@@ -156,21 +188,96 @@ export async function purgeExpiredData(
 }
 
 /**
+ * Roll up any date inside the raw retention window that has no completed
+ * maintenance_log entry, up to (but excluding) `upTo`.
+ *
+ * Bounded by retention on the old end and by `upTo` on the new end, so the
+ * work is proportional to the outage, not to the age of the instance.
+ */
+async function backfillMissedRollups(
+  db: DbAdapter,
+  upTo: string,
+  rawCutoff: string,
+): Promise<void> {
+  const done = new Set(
+    (await db.query<{ date: string }>(
+      `SELECT date FROM maintenance_log WHERE date >= ? AND date < ?`,
+      rawCutoff,
+      upTo,
+    )).map((r) => r.date),
+  );
+
+  // Only consider dates that actually have raw rows. Walking every calendar
+  // day in the window instead would "backfill" days with no traffic — and on a
+  // fresh instance, every day before it existed — writing a maintenance_log
+  // row and an empty rollup for each.
+  const candidates = await db.query<{ date: string }>(
+    `SELECT DISTINCT substr(created_at, 1, 10) AS date
+     FROM visitor_views
+     WHERE created_at >= (? || 'T00:00:00.000Z')
+       AND created_at < (? || 'T00:00:00.000Z')
+     ORDER BY date`,
+    rawCutoff,
+    upTo,
+  );
+
+  const missing = candidates.map((r) => r.date).filter((d) => !done.has(d));
+  if (missing.length === 0) return;
+
+  console.log(
+    `[echelon] backfilling ${missing.length} missed rollup(s): ${
+      missing.join(", ")
+    }`,
+  );
+  for (const iso of missing) {
+    await db.run(
+      `INSERT OR IGNORE INTO maintenance_log (date, status) VALUES (?, 'started')`,
+      iso,
+    );
+    try {
+      const rows = await rollupDay(db, iso);
+      await db.run(
+        `UPDATE maintenance_log SET status = 'complete', rollup_rows = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE date = ?`,
+        rows,
+        iso,
+      );
+    } catch (e) {
+      console.error(`[echelon] backfill rollup failed for ${iso}:`, e);
+    }
+  }
+}
+
+/**
  * Run the full daily maintenance cycle:
- * 1. Rollup yesterday's visitor_views
- * 2. Purge expired data
- * 3. VACUUM
+ * 1. Retry incomplete rollups (bounded to raw retention)
+ * 2. Backfill days missed while the process was down
+ * 3. Rollup yesterday's visitor_views
+ * 4. Purge expired data
+ * 5. VACUUM
  */
 export async function runDailyMaintenance(db: DbAdapter): Promise<void> {
   const start = Date.now();
   const date = yesterdayUTC();
   console.log("[echelon] daily maintenance: starting");
 
-  // Check for incomplete rollups from previous days (retry up to 7 days back)
+  // Retry incomplete rollups, bounded to the raw retention window — beyond it
+  // the source rows are gone, so retrying forever could only ever destroy the
+  // aggregate. (The old comment claimed a 7-day bound; there was none.)
+  const rawCutoff = daysAgoUTC(RETENTION_DAYS);
   const incomplete = await db.query<{ date: string }>(
     `SELECT date FROM maintenance_log WHERE status != 'complete' ORDER BY date`,
   );
   for (const row of incomplete) {
+    if (row.date < rawCutoff) {
+      console.warn(
+        `[echelon] rollup for ${row.date} is beyond raw retention — marking unrecoverable`,
+      );
+      await db.run(
+        `UPDATE maintenance_log SET status = 'unrecoverable' WHERE date = ?`,
+        row.date,
+      );
+      continue;
+    }
     console.log(`[echelon] retrying incomplete rollup for ${row.date}`);
     try {
       await rollupDay(db, row.date);
@@ -182,6 +289,13 @@ export async function runDailyMaintenance(db: DbAdapter): Promise<void> {
       console.error(`[echelon] retry rollup failed for ${row.date}:`, e);
     }
   }
+
+  // Backfill days the process was down for. A run only ever rolled up
+  // yesterday, and the retry loop above only reconsiders dates that already
+  // have a maintenance_log row — which only a run that actually happened
+  // creates. So any day with no run at 03:00 UTC was never aggregated and
+  // never queued, and silently vanished once its raw rows aged out.
+  await backfillMissedRollups(db, date, rawCutoff);
 
   // Mark today's run as started
   await db.run(

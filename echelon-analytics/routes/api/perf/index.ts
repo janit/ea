@@ -1,4 +1,5 @@
 import { define } from "../../../utils.ts";
+import { isPlainObject, readJsonArray } from "../../../lib/request.ts";
 import {
   insertMetrics,
   type PerfQuery,
@@ -34,17 +35,8 @@ export const handler = define.handlers({
       );
     }
 
-    let body: unknown;
-    try {
-      body = await ctx.req.json();
-    } catch {
-      return Response.json(
-        { error: "invalid_payload", message: "Invalid JSON" },
-        { status: 400 },
-      );
-    }
-
-    if (!Array.isArray(body) || body.length > 100) {
+    const body = await readJsonArray(ctx.req);
+    if (!body || body.length > 100) {
       return Response.json(
         {
           error: "invalid_payload",
@@ -56,6 +48,15 @@ export const handler = define.handlers({
 
     const sanitized: PerfMetric[] = [];
     for (const m of body) {
+      if (!isPlainObject(m)) {
+        return Response.json(
+          {
+            error: "invalid_payload",
+            message: "Each metric must be an object",
+          },
+          { status: 400 },
+        );
+      }
       if (
         typeof m.category !== "string" || !m.category ||
         typeof m.metric !== "string" || !m.metric ||
@@ -72,6 +73,31 @@ export const handler = define.handlers({
         );
       }
 
+      // Enforce the size cap on the serialized form, and reject rather than
+      // truncate — a truncated JSON string is not recoverable by any consumer.
+      let metadata: Record<string, unknown> | null = null;
+      if (m.metadata != null) {
+        if (!isPlainObject(m.metadata)) {
+          return Response.json(
+            {
+              error: "invalid_payload",
+              message: "metadata must be an object",
+            },
+            { status: 400 },
+          );
+        }
+        if (JSON.stringify(m.metadata).length > 2048) {
+          return Response.json(
+            {
+              error: "invalid_payload",
+              message: "metadata must serialize to at most 2048 bytes",
+            },
+            { status: 400 },
+          );
+        }
+        metadata = m.metadata;
+      }
+
       sanitized.push({
         category: String(m.category).slice(0, 128),
         metric: String(m.metric).slice(0, 128),
@@ -83,10 +109,11 @@ export const handler = define.handlers({
         branch: typeof m.branch === "string"
           ? m.branch.slice(0, 128)
           : undefined,
-        metadata: m.metadata != null
-          ? JSON.stringify(m.metadata).slice(0, 2048)
-          : undefined,
-      } as PerfMetric);
+        // Pass the object through — insertMetrics() serializes. Stringifying
+        // here too stored a JSON-encoded string instead of an object, and the
+        // 2048 truncation could cut mid-escape into unparseable JSON.
+        metadata: metadata ?? undefined,
+      });
     }
 
     try {

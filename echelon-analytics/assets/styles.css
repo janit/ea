@@ -79,12 +79,12 @@
 [data-theme="badboys"] body {
   background:
     repeating-linear-gradient(
-      90deg,
-      transparent 0px,
-      transparent 58px,
-      rgba(80, 50, 20, 0.15) 58px,
-      rgba(80, 50, 20, 0.15) 60px
-    ),
+    90deg,
+    transparent 0px,
+    transparent 58px,
+    rgba(80, 50, 20, 0.15) 58px,
+    rgba(80, 50, 20, 0.15) 60px
+  ),
     repeating-linear-gradient(
     0deg,
     transparent 0px,
@@ -139,10 +139,10 @@
   border: 2px solid rgba(237, 23, 76, 0.4);
   background:
     radial-gradient(
-      ellipse at top,
-      rgba(237, 23, 76, 0.08) 0%,
-      transparent 70%
-    ),
+    ellipse at top,
+    rgba(237, 23, 76, 0.08) 0%,
+    transparent 70%
+  ),
     #2a1e14;
   box-shadow:
     0 0 15px rgba(237, 23, 76, 0.1),

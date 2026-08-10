@@ -11,3 +11,14 @@ data-*/
 .claude/*
 !.claude/settings.json
 node_modules/
+
+# Serena MCP project metadata (local tooling, never published)
+.serena/
+
+# Claude Mind stores and local settings. The root `.claude/*` rule above is
+# anchored to this file's directory, so nested ones (echelon-analytics/.claude)
+# need their own pattern. Kept narrow so tracked .claude/agents and
+# .claude/agent-memory content is unaffected.
+**/.claude/mind.mv2
+**/.claude/mind.mv2.lock
+**/.claude/settings.local.json

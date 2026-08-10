@@ -19,7 +19,13 @@
  *   ECHELON_URL=http://localhost:1947 ECHELON_SECRET=my-token deno task mcp
  */
 
+// The SDK's `./*` export maps types to `./dist/esm/*.d.ts`, so the `.js`
+// specifier needed at runtime resolves to a nonexistent `mcp.js.d.ts` for
+// types. The extensionless specifier resolves types correctly but not runtime,
+// hence the split: `@deno-types` for types, `.js` for the actual import.
+// @deno-types="@modelcontextprotocol/sdk/server/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// @deno-types="@modelcontextprotocol/sdk/server/stdio"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
@@ -34,12 +40,41 @@ if (!baseUrl) {
   Deno.exit(1);
 }
 
+// Reject embedded credentials: they would be logged verbatim below (MCP
+// clients persist subprocess stderr to log files), and Deno merges URL userinfo
+// with the bearer into a single malformed Authorization header.
+let parsedBase: URL;
+try {
+  parsedBase = new URL(baseUrl);
+} catch {
+  log(`ECHELON_URL is not a valid URL: ${baseUrl}`);
+  Deno.exit(1);
+}
+if (parsedBase.username || parsedBase.password) {
+  log(
+    "ECHELON_URL must not contain credentials. Use ECHELON_SECRET for the bearer token.",
+  );
+  Deno.exit(1);
+}
+
 const secret = Deno.env.get("ECHELON_SECRET");
 
-log(`API endpoint: ${baseUrl}`);
+// Log the origin only — never the full URL, which may carry a query string.
+log(`API endpoint: ${parsedBase.origin}`);
 if (secret) log("Using bearer token for read-only access");
 
 // --- API client (GET only) --------------------------------------------------
+
+const REQUEST_TIMEOUT_MS = 30_000;
+/** Cap on any API text handed to the model. Responses can be unbounded. */
+const MAX_RESPONSE_BYTES = 256_000;
+
+function truncate(body: string): string {
+  return body.length > MAX_RESPONSE_BYTES
+    ? body.slice(0, MAX_RESPONSE_BYTES) +
+      `\n… truncated (${body.length} bytes total)`
+    : body;
+}
 
 async function api(path: string): Promise<unknown> {
   const url = `${baseUrl.replace(/\/$/, "")}${path}`;
@@ -50,14 +85,46 @@ async function api(path: string): Promise<unknown> {
     headers["Authorization"] = `Bearer ${secret}`;
   }
 
-  const resp = await fetch(url, { headers });
+  const resp = await fetch(url, {
+    headers,
+    // Do not follow redirects. Deno strips Authorization on a cross-origin
+    // hop, so the token does not leak — but a 302 would otherwise let whoever
+    // controls it choose the text the agent reads as "your analytics", which
+    // is a prompt-injection channel carrying the credibility of the user's own
+    // data.
+    redirect: "manual",
+    // Without a deadline, an instance that opens a response and never writes
+    // hangs the tool call, and its promise and socket, indefinitely.
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
 
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`API ${resp.status}: ${body}`);
+  if (resp.status >= 300 && resp.status < 400) {
+    throw new Error(
+      `API ${resp.status}: refusing to follow redirect to ${
+        resp.headers.get("location") ?? "(no location)"
+      }`,
+    );
   }
 
-  return resp.json();
+  if (!resp.ok) {
+    // Truncate: this string goes straight into the model's context, and a
+    // hostile or broken instance can otherwise return megabytes.
+    throw new Error(`API ${resp.status}: ${truncate(await resp.text())}`);
+  }
+
+  // Reject rather than truncate on the success path — a truncated JSON body
+  // would only fail to parse, with a misleading error.
+  const text = await resp.text();
+  if (text.length > MAX_RESPONSE_BYTES) {
+    throw new Error(
+      `API ${resp.status}: response too large (${text.length} bytes, limit ${MAX_RESPONSE_BYTES})`,
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`API ${resp.status}: response was not valid JSON`);
+  }
 }
 
 // --- MCP Server -------------------------------------------------------------

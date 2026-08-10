@@ -1,5 +1,7 @@
 import { page } from "fresh";
 import { define } from "../../utils.ts";
+import { checkCsrf } from "../../lib/csrf.ts";
+import { isAuthLimited, recordAuthFailure } from "../../lib/auth-limit.ts";
 import {
   AUTH_PASSWORD_HASH,
   AUTH_USERNAME,
@@ -10,59 +12,6 @@ import { DEFAULT_THEME } from "../../lib/themes.ts";
 import { verifyPassword } from "../../lib/auth.ts";
 import { createSession } from "../../lib/session.ts";
 import { getClientIp } from "../../lib/ip.ts";
-
-// --- Login rate limiting ---
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const RATE_LIMIT_MAX_ATTEMPTS = 5;
-const MAX_LOGIN_MAP_SIZE = 50_000;
-
-interface RateLimitEntry {
-  attempts: number;
-  firstAttempt: number;
-}
-
-const loginAttempts = new Map<string, RateLimitEntry>();
-
-/** Prune expired entries from the login attempts map. */
-function pruneLoginAttempts(): void {
-  const now = Date.now();
-  for (const [ip, entry] of loginAttempts) {
-    if (now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-      loginAttempts.delete(ip);
-    }
-  }
-}
-
-// GC stale rate limit entries every 5 minutes
-setInterval(pruneLoginAttempts, 5 * 60 * 1000);
-
-function isRateLimited(ip: string): boolean {
-  const entry = loginAttempts.get(ip);
-  if (!entry) return false;
-  if (Date.now() - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-    loginAttempts.delete(ip);
-    return false;
-  }
-  return entry.attempts >= RATE_LIMIT_MAX_ATTEMPTS;
-}
-
-function recordFailedAttempt(ip: string): void {
-  // Prevent unbounded map growth from distributed attacks
-  if (loginAttempts.size >= MAX_LOGIN_MAP_SIZE) {
-    pruneLoginAttempts();
-    if (loginAttempts.size >= MAX_LOGIN_MAP_SIZE) {
-      const oldest = loginAttempts.keys().next().value;
-      if (oldest !== undefined) loginAttempts.delete(oldest);
-    }
-  }
-  const now = Date.now();
-  const entry = loginAttempts.get(ip);
-  if (!entry || now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-    loginAttempts.set(ip, { attempts: 1, firstAttempt: now });
-  } else {
-    entry.attempts++;
-  }
-}
 
 export const handler = define.handlers({
   GET(_ctx) {
@@ -75,10 +24,29 @@ export const handler = define.handlers({
   },
 
   async POST(ctx) {
+    // /admin/login is whitelisted ahead of both middlewares, so it is the one
+    // mutating endpoint their CSRF checks never covered. Without this, a
+    // cross-site form post can log a victim into an attacker's session (the
+    // response's Set-Cookie is stored normally; SameSite only governs sending).
+    if (!checkCsrf(ctx.req, new URL(ctx.req.url).host)) {
+      return new Response("CSRF validation failed — origin mismatch", {
+        status: 403,
+      });
+    }
+
     const ip = getClientIp(ctx.req);
+    const form = await ctx.req.formData();
+    const username = (form.get("username") as string) ?? "";
+    const password = (form.get("password") as string) ?? "";
+
+    // Key the limiter on IP *and* username. Keyed on IP alone, an instance
+    // behind a reverse proxy without ECHELON_TRUST_PROXY sees every request as
+    // 127.0.0.1 — one bucket for the whole internet — so 5 anonymous failures
+    // locked the real administrator out, renewably, forever.
+    const limitKey = `${ip}|${username}`;
 
     // Check rate limit before processing
-    if (isRateLimited(ip)) {
+    if (isAuthLimited(limitKey)) {
       ctx.state.pageData = {
         error: false,
         rateLimited: true,
@@ -86,10 +54,6 @@ export const handler = define.handlers({
       };
       return page();
     }
-
-    const form = await ctx.req.formData();
-    const username = (form.get("username") as string) ?? "";
-    const password = (form.get("password") as string) ?? "";
 
     const usernameOk = constantTimeEquals(username, AUTH_USERNAME);
     const passwordOk = await verifyPassword(password, AUTH_PASSWORD_HASH);
@@ -106,7 +70,7 @@ export const handler = define.handlers({
     }
 
     // Record failed attempt for rate limiting
-    recordFailedAttempt(ip);
+    recordAuthFailure(limitKey);
 
     ctx.state.pageData = { error: true, rateLimited: false, version: VERSION };
     return page();

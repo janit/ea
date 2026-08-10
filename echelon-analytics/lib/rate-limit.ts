@@ -14,13 +14,26 @@ const MAX_MAP_SIZE = 200_000;
 const rateMap = new Map<string, RateEntry>();
 let lastPrune = Date.now();
 
-/** Prune expired entries to prevent memory leak. */
+/** Prune expired entries, then enforce MAX_MAP_SIZE as a hard cap. */
 function pruneRateMap(): void {
   const now = Date.now();
   lastPrune = now;
   for (const [key, entry] of rateMap) {
     if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
       rateMap.delete(key);
+    }
+  }
+
+  // Expiry alone is not a bound: if enough entries are live, the map stays
+  // over MAX_MAP_SIZE and the size check below then re-runs this full scan on
+  // every subsequent request. Evict oldest-first (Map preserves insertion
+  // order) so the cap actually holds and the scan cannot become per-request.
+  if (rateMap.size > MAX_MAP_SIZE) {
+    const excess = rateMap.size - MAX_MAP_SIZE;
+    let removed = 0;
+    for (const key of rateMap.keys()) {
+      rateMap.delete(key);
+      if (++removed >= excess) break;
     }
   }
 }

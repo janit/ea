@@ -28,7 +28,4 @@ export interface DbAdapter {
 
   /** Close the database connection. */
   close(): Promise<void>;
-
-  /** The SQL dialect this adapter speaks. */
-  readonly dialect: "sqlite";
 }

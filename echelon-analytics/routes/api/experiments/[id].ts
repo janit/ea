@@ -1,4 +1,6 @@
 import { define } from "../../../utils.ts";
+import { decodeParam } from "../../../lib/request.ts";
+import { readJsonObject } from "../../../lib/request.ts";
 
 const VALID_STATUSES = new Set([
   "draft",
@@ -18,12 +20,17 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 export const handler = define.handlers({
   async PATCH(ctx) {
     const db = ctx.state.db;
-    const expId = decodeURIComponent(ctx.params.id).slice(0, 128);
+    const rawId = decodeParam(ctx.params.id);
+    if (rawId === null) {
+      return Response.json(
+        { error: "invalid_id", message: "Malformed experiment ID" },
+        { status: 400 },
+      );
+    }
+    const expId = rawId.slice(0, 128);
 
-    let body: Record<string, unknown>;
-    try {
-      body = (await ctx.req.json()) as Record<string, unknown>;
-    } catch {
+    const body = await readJsonObject(ctx.req);
+    if (!body) {
       return Response.json(
         { error: "invalid_payload", message: "Invalid JSON" },
         { status: 400 },

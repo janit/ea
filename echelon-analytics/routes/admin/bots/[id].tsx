@@ -1,5 +1,6 @@
 import { page } from "fresh";
 import { define } from "../../../utils.ts";
+import { decodeParam } from "../../../lib/request.ts";
 import { AdminNav } from "../../../components/AdminNav.tsx";
 import { getLiveStats } from "../../../lib/admin-stats.ts";
 import BotActions from "../../../islands/BotActions.tsx";
@@ -11,7 +12,11 @@ import { terminalDisplayName } from "../../../lib/anonymize.ts";
 export const handler = define.handlers({
   async GET(ctx) {
     const db = ctx.state.db;
-    const visitorId = decodeURIComponent(ctx.params.id);
+    const visitorId = decodeParam(ctx.params.id);
+    // A malformed percent-escape cannot match any stored ID.
+    if (visitorId === null) {
+      return new Response("Visitor not found", { status: 404 });
+    }
 
     const views = await db.query<Record<string, unknown>>(
       `SELECT id, path, site_id, interaction_ms, screen_width, screen_height,

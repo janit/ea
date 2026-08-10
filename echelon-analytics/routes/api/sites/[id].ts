@@ -1,10 +1,13 @@
 import { define } from "../../../utils.ts";
+import { decodeParam } from "../../../lib/request.ts";
+import { readJsonObject } from "../../../lib/request.ts";
 import { validateSiteIdStrict } from "../../../lib/config.ts";
 import { markConsentCssStale } from "../../../lib/consent-css.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
-    const siteId = validateSiteIdStrict(decodeURIComponent(ctx.params.id));
+    const rawId = decodeParam(ctx.params.id);
+    const siteId = rawId === null ? null : validateSiteIdStrict(rawId);
     if (!siteId) {
       return Response.json(
         { error: "invalid_site_id", message: "Invalid site ID" },
@@ -23,7 +26,8 @@ export const handler = define.handlers({
 
   async PATCH(ctx) {
     const db = ctx.state.db;
-    const siteId = validateSiteIdStrict(decodeURIComponent(ctx.params.id));
+    const rawId = decodeParam(ctx.params.id);
+    const siteId = rawId === null ? null : validateSiteIdStrict(rawId);
     if (!siteId) {
       return Response.json(
         { error: "invalid_site_id", message: "Invalid site ID" },
@@ -31,10 +35,8 @@ export const handler = define.handlers({
       );
     }
 
-    let body: Record<string, unknown>;
-    try {
-      body = (await ctx.req.json()) as Record<string, unknown>;
-    } catch {
+    const body = await readJsonObject(ctx.req);
+    if (!body) {
       return Response.json(
         { error: "invalid_payload", message: "Invalid JSON" },
         { status: 400 },

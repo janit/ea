@@ -10,12 +10,14 @@ const RETRY_DELAY_MS = 2_000;
 // After this many back-to-back flush cycles fail, escalate to CRITICAL
 // so health checks and logs make the degradation obvious.
 const CRITICAL_CYCLE_THRESHOLD = 3;
+// Backstop so a steady arrival rate during shutdown cannot loop forever.
+const MAX_DRAIN_ROUNDS = 100;
 
 export class BufferedWriter<T> {
   private buffer: T[] = [];
   private startTimer: ReturnType<typeof setTimeout> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private flushing: Promise<void> | null = null;
+  private flushing: Promise<boolean> | null = null;
   private dropped = 0;
   private consecutiveFailedCycles = 0;
 
@@ -73,31 +75,44 @@ export class BufferedWriter<T> {
     this.startTimer = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    let prev = this.buffer.length;
+    // Drain on an explicit success signal, not on buffer length. Length was a
+    // proxy for "did the flush work", and push() keeps running during shutdown
+    // as in-flight requests land — so a *successful* flush that was outpaced by
+    // new arrivals was misread as a failure and the whole buffer discarded.
+    let rounds = 0;
     while (this.buffer.length > 0) {
-      await this.flush(db);
-      if (this.buffer.length >= prev) {
+      if (++rounds > MAX_DRAIN_ROUNDS) {
+        console.error(
+          `[echelon] CRITICAL: ${this.label} shutdown still draining after ` +
+            `${MAX_DRAIN_ROUNDS} rounds — ${this.buffer.length} records LOST`,
+        );
+        this.buffer.length = 0;
+        break;
+      }
+      if (!await this.flushOnce(db)) {
         console.error(
           `[echelon] CRITICAL: ${this.label} shutdown failed to flush ${this.buffer.length} records — DATA LOST`,
         );
         this.buffer.length = 0;
         break;
       }
-      prev = this.buffer.length;
     }
   }
 
+  /** Timer-driven flush. Errors are already logged inside flushWithRetry. */
   private flush(db: DbAdapter): Promise<void> {
+    return this.flushOnce(db).then(() => {});
+  }
+
+  /** Flush one batch. Resolves true if it was written, false if it failed. */
+  private flushOnce(db: DbAdapter): Promise<boolean> {
     if (this.flushing) return this.flushing;
     const count = this.buffer.length;
-    if (count === 0) return Promise.resolve();
+    if (count === 0) return Promise.resolve(true);
     // Snapshot the batch but keep in buffer until insert confirms
     const batch = this.buffer.slice(0, count);
     this.flushing = this.flushWithRetry(db, batch, count)
-      // Prevent unhandled rejections on timer-driven flushes — the error
-      // is already logged inside flushWithRetry. stop() also awaits
-      // flush() but tolerates rejection via the outer drain loop.
-      .catch(() => {})
+      .then(() => true, () => false)
       .finally(() => {
         this.flushing = null;
       });

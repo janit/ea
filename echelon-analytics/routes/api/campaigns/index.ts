@@ -1,4 +1,5 @@
 import { define } from "../../../utils.ts";
+import { readJsonObject } from "../../../lib/request.ts";
 import { markStale, refreshUtmCampaigns } from "../../../lib/utm.ts";
 import { validateSiteId } from "../../../lib/config.ts";
 
@@ -14,10 +15,8 @@ export const handler = define.handlers({
 
   async POST(ctx) {
     const db = ctx.state.db;
-    let body: Record<string, unknown>;
-    try {
-      body = (await ctx.req.json()) as Record<string, unknown>;
-    } catch {
+    const body = await readJsonObject(ctx.req);
+    if (!body) {
       return Response.json(
         { error: "invalid_payload", message: "Invalid JSON" },
         { status: 400 },
@@ -61,19 +60,31 @@ export const handler = define.handlers({
         cUtm,
         cSite,
       );
-
-      markStale();
-      await refreshUtmCampaigns(db);
-      return Response.json({ created: cId }, { status: 201 });
-    } catch {
+    } catch (err) {
+      // Only a constraint violation is a genuine conflict. Any other failure
+      // (locked DB, full disk, missing table) is a 500 so operators see a real
+      // error instead of a misleading "duplicate".
+      if (err instanceof Error && /constraint failed/i.test(err.message)) {
+        return Response.json(
+          {
+            error: "conflict",
+            message:
+              "Campaign already exists (duplicate id or utm_campaign+site_id)",
+          },
+          { status: 409 },
+        );
+      }
+      console.error("[echelon] campaign creation failed:", err);
       return Response.json(
-        {
-          error: "conflict",
-          message:
-            "Campaign creation failed (duplicate id or utm_campaign+site_id)",
-        },
-        { status: 409 },
+        { error: "internal_error", message: "Campaign creation failed" },
+        { status: 500 },
       );
     }
+
+    // Post-commit cache refresh. Kept outside the try so a failure here cannot
+    // be reported as "creation failed" for a campaign that was in fact created.
+    markStale();
+    await refreshUtmCampaigns(db);
+    return Response.json({ created: cId }, { status: 201 });
   },
 });

@@ -184,6 +184,17 @@ export async function flushRemainingViews(db: DbAdapter): Promise<void> {
   await viewWriter.stop(db);
 }
 
+/** Writer health for the health endpoint. Healthy = nothing failed or dropped. */
+export function getViewWriterHealth(): {
+  failedCycles: number;
+  dropped: number;
+} {
+  return {
+    failedCycles: viewWriter.failedCycles,
+    dropped: viewWriter.droppedCount,
+  };
+}
+
 export function getViewBufferSize(): number {
   return viewWriter.size;
 }
@@ -285,6 +296,14 @@ export async function handleBeacon(
   await refreshExcluded(db);
   await refreshUtmCampaigns(db);
   await refreshConsentCss(db);
+
+  // Drop excluded visitors at ingest, as the events endpoint already does.
+  // This path refreshed the cache but never consulted it, so an excluded
+  // visitor's pageviews were still written to visitor_views — filtered out of
+  // the daily rollup, but present in every raw-sourced figure.
+  if (isExcluded(visitorId)) {
+    return new Response(PIXEL, { headers: GIF_HEADERS });
+  }
 
   // Parse UTM params (base64-encoded from tracker)
   const decodeB64Param = (key: string): string | null => {
@@ -390,9 +409,23 @@ export async function handleBeacon(
         screenWidth: validScreen ? screenWidth! : 0,
         screenHeight: validScreen ? screenHeight! : 0,
         countryCode: visitorCountry ?? "unknown",
-        acceptLanguage: req.headers.get("accept-language") ?? "unknown",
+        // Bounded like every other fingerprint field. The raw header is
+        // attacker-controlled and up to 32 KB, is held in `prints` for 20
+        // minutes, and is serialized verbatim into bot_score_detail for every
+        // row a cluster touches.
+        acceptLanguage: (req.headers.get("accept-language") ?? "unknown").slice(
+          0,
+          64,
+        ),
       },
-      headlessTainted: botIpPenalty >= 50,
+      // `>= 50` matched only the confirmed map, which the correlator alone
+      // writes — so reaching the tainted tier required already having been
+      // confirmed, and the 4-IP threshold it gates was unreachable. The
+      // suspected map (+20), fed by headless-UA leaks in the root middleware,
+      // is what this tier was meant to consume. A 4-IP identical-fingerprint
+      // cluster is already statistical evidence, so the shared-NAT caution
+      // behind the low suspected penalty does not apply once clustering passed.
+      headlessTainted: botIpPenalty > 0,
       timestamp: Date.now(),
     });
 

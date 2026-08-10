@@ -1,4 +1,7 @@
 import { define } from "../../utils.ts";
+import { checkCsrf } from "../../lib/csrf.ts";
+import { isAuthLimited, recordAuthFailure } from "../../lib/auth-limit.ts";
+import { getClientIp } from "../../lib/ip.ts";
 import {
   AUTH_USERNAME,
   constantTimeEquals,
@@ -41,15 +44,20 @@ export const handler = define.handlers([
 
     const cookie = ctx.req.headers.get("cookie");
 
-    // Check Bearer header (API token)
+    // Check Bearer header (API token). Failures are throttled like failed
+    // logins; a valid token is never limited.
     if (SECRET) {
       const auth = ctx.req.headers.get("authorization");
-      if (
-        auth && auth.startsWith("Bearer ") &&
-        constantTimeEquals(auth.slice(7), SECRET)
-      ) {
-        ctx.state.isAuthenticated = true;
-        return ctx.next();
+      if (auth && auth.startsWith("Bearer ")) {
+        const limitKey = `bearer|${getClientIp(ctx.req)}`;
+        if (isAuthLimited(limitKey)) {
+          return new Response("Too many failed attempts", { status: 429 });
+        }
+        if (constantTimeEquals(auth.slice(7), SECRET)) {
+          ctx.state.isAuthenticated = true;
+          return ctx.next();
+        }
+        recordAuthFailure(limitKey);
       }
     }
 
@@ -60,39 +68,11 @@ export const handler = define.handlers([
         ctx.state.isAuthenticated = true;
 
         // CSRF protection for mutating requests.
-        // Compare origin *host* against the request Host header — works behind
-        // any reverse proxy without needing x-forwarded-proto. Assumes the
-        // proxy preserves the external Host header (Caddy/nginx defaults do).
-        const method = ctx.req.method;
-        if (
-          method === "POST" || method === "PUT" || method === "PATCH" ||
-          method === "DELETE"
-        ) {
-          const origin = ctx.req.headers.get("origin");
-          const referer = ctx.req.headers.get("referer");
-          const requestHost = ctx.req.headers.get("host") || url.host;
-
-          let originMatch = false;
-          if (origin) {
-            try {
-              originMatch = new URL(origin).host === requestHost;
-            } catch {
-              originMatch = false;
-            }
-          } else if (referer) {
-            try {
-              originMatch = new URL(referer).host === requestHost;
-            } catch {
-              originMatch = false;
-            }
-          }
-
-          if (!originMatch) {
-            return Response.json(
-              { error: "CSRF validation failed — origin mismatch" },
-              { status: 403 },
-            );
-          }
+        if (!checkCsrf(ctx.req, url.host)) {
+          return Response.json(
+            { error: "CSRF validation failed — origin mismatch" },
+            { status: 403 },
+          );
         }
 
         return ctx.next();
@@ -109,6 +89,13 @@ export const handler = define.handlers([
   async (ctx) => {
     ctx.state.url = ctx.req.url;
     const url = new URL(ctx.req.url);
+
+    // The login page renders none of this, and it is reachable unauthenticated
+    // — so without this guard every anonymous GET /admin/login ran a full
+    // covering-index scan of visitor_views plus a telemetry read, on the single
+    // worker, with nothing rate-limiting it.
+    if (url.pathname === "/admin/login") return ctx.next();
+
     const cookie = ctx.req.headers.get("cookie");
     const paramSite = url.searchParams.get("site_id");
     const cookieSite = getCookie(cookie, "echelon_site");
@@ -120,10 +107,14 @@ export const handler = define.handlers([
     // Days — query param > cookie > 30
     const paramDays = url.searchParams.get("days");
     const cookieDays = getCookie(cookie, "echelon_days");
-    const days = Math.min(
-      Math.max(1, parseInt(paramDays ?? cookieDays ?? "30")),
-      365,
-    );
+    // parseInt("x") is NaN, and Math.min/max propagate it — the NaN then
+    // reached daysAgoUTC() and threw RangeError (500), *and* was written into
+    // a one-year cookie below, so every later visit re-read "NaN" and 500'd
+    // again. The cookie is HttpOnly, so page JS could not clear it either.
+    const parsedDays = parseInt(paramDays ?? cookieDays ?? "30", 10);
+    const days = Number.isFinite(parsedDays)
+      ? Math.min(Math.max(1, parsedDays), 365)
+      : 30;
     ctx.state.days = days;
 
     // Known sites — single query for the nav dropdown

@@ -5,6 +5,13 @@
  * No legacy sessions/events/daily_aggregates tables.
  */
 
+// NOTE: Indexes over columns that migrate() adds (utm_* on visitor_views and
+// semantic_events, experiment_id/variant_id on semantic_events) deliberately
+// live in migrate(), NOT here. SCHEMA_SQL runs first, and CREATE TABLE IF NOT
+// EXISTS is a no-op on an existing database — so an index here over a
+// migrate-added column threw "no such column" on exactly the legacy databases
+// migrate() exists to upgrade, aborting before it could run. DatabaseSync.exec
+// is not atomic either, so the statements before the failure stayed committed.
 export const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS visitor_views (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,11 +47,6 @@ export const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vv_country      ON visitor_views(country_code);
   CREATE INDEX IF NOT EXISTS idx_vv_device       ON visitor_views(device_type);
   CREATE INDEX IF NOT EXISTS idx_vv_created_bot  ON visitor_views(created_at, bot_score);
-  CREATE INDEX IF NOT EXISTS idx_vv_utm_campaign ON visitor_views(utm_campaign);
-  CREATE INDEX IF NOT EXISTS idx_vv_utm_site_created
-    ON visitor_views(utm_campaign, site_id, created_at)
-    WHERE utm_campaign IS NOT NULL;
-
   CREATE INDEX IF NOT EXISTS idx_vv_site_created_clean
     ON visitor_views(site_id, created_at)
     WHERE bot_score BETWEEN 0 AND 49;
@@ -92,11 +94,6 @@ export const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_se_site_type_created ON semantic_events(site_id, event_type, created_at);
   CREATE INDEX IF NOT EXISTS idx_se_visitor           ON semantic_events(visitor_id);
   CREATE INDEX IF NOT EXISTS idx_se_created_bot       ON semantic_events(created_at, bot_score);
-  CREATE INDEX IF NOT EXISTS idx_se_experiment        ON semantic_events(experiment_id, variant_id);
-  CREATE INDEX IF NOT EXISTS idx_se_utm_campaign
-    ON semantic_events(utm_campaign, site_id)
-    WHERE utm_campaign IS NOT NULL;
-
   CREATE TABLE IF NOT EXISTS excluded_visitors (
     visitor_id TEXT PRIMARY KEY,
     label TEXT,

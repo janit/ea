@@ -14,9 +14,7 @@ function toSqlite(params: SQLParam[]): SqliteValue[] {
 }
 
 export class SqliteAdapter implements DbAdapter {
-  readonly dialect = "sqlite" as const;
   private db: DatabaseSync;
-  private txDepth = 0;
   private txQueue: Promise<unknown> = Promise.resolve();
 
   constructor(db: DatabaseSync) {
@@ -48,10 +46,23 @@ export class SqliteAdapter implements DbAdapter {
     return Promise.resolve();
   }
 
+  /**
+   * Run `fn` inside a top-level transaction, serialized against every other
+   * top-level transaction on this adapter.
+   *
+   * Nesting is expressed by *which object* you call this on, not by a shared
+   * counter. Previously `if (this.txDepth > 0) return this._runTransaction(fn)`
+   * skipped the queue whenever any transaction was in flight — and since a
+   * transaction callback may await, an unrelated task calling
+   * `db.transaction()` in that window silently joined the other transaction as
+   * a savepoint. It resolved successfully to its own caller (BufferedWriter
+   * then dropped those records as durable) and was discarded when the
+   * *other* transaction rolled back.
+   *
+   * Only the handle passed into the callback can open a savepoint, so an
+   * unrelated caller now always queues and gets its own BEGIN/COMMIT.
+   */
   transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
-    if (this.txDepth > 0) {
-      return this._runTransaction(fn);
-    }
     const run = () => this._runTransaction(fn);
     const queued = this.txQueue.then(run, run);
     this.txQueue = queued.then(() => {}, () => {});
@@ -61,30 +72,14 @@ export class SqliteAdapter implements DbAdapter {
   private async _runTransaction<T>(
     fn: (tx: DbAdapter) => Promise<T>,
   ): Promise<T> {
-    const depth = this.txDepth++;
-    const savepoint = `sp_${depth}`;
-    if (depth === 0) {
-      this.db.exec("BEGIN");
-    } else {
-      this.db.exec(`SAVEPOINT ${savepoint}`);
-    }
+    this.db.exec("BEGIN");
     try {
-      const result = await fn(this);
-      if (depth === 0) {
-        this.db.exec("COMMIT");
-      } else {
-        this.db.exec(`RELEASE ${savepoint}`);
-      }
+      const result = await fn(new NestedTx(this, this.db, 1));
+      this.db.exec("COMMIT");
       return result;
     } catch (e) {
-      if (depth === 0) {
-        this.db.exec("ROLLBACK");
-      } else {
-        this.db.exec(`ROLLBACK TO ${savepoint}`);
-      }
+      this.db.exec("ROLLBACK");
       throw e;
-    } finally {
-      this.txDepth--;
     }
   }
 
@@ -102,9 +97,60 @@ export class SqliteAdapter implements DbAdapter {
     this.db.close();
     return Promise.resolve();
   }
+}
 
-  /** Direct access to the underlying DatabaseSync. */
-  get raw(): DatabaseSync {
-    return this.db;
+/**
+ * The handle handed to a transaction callback.
+ *
+ * Delegates reads/writes to the same connection, but its `transaction()` opens
+ * a SAVEPOINT instead of queueing — that is the only legitimate way to nest.
+ * Because a caller can only obtain one of these from inside a callback,
+ * nesting cannot be reached by an unrelated concurrent task.
+ */
+class NestedTx implements DbAdapter {
+  constructor(
+    private root: SqliteAdapter,
+    private db: DatabaseSync,
+    private depth: number,
+  ) {}
+
+  query<T>(sql: string, ...params: SQLParam[]): Promise<T[]> {
+    return this.root.query<T>(sql, ...params);
+  }
+
+  queryOne<T>(sql: string, ...params: SQLParam[]): Promise<T | undefined> {
+    return this.root.queryOne<T>(sql, ...params);
+  }
+
+  run(sql: string, ...params: SQLParam[]): Promise<RunResult> {
+    return this.root.run(sql, ...params);
+  }
+
+  exec(sql: string): Promise<void> {
+    return this.root.exec(sql);
+  }
+
+  columnExists(table: string, column: string): Promise<boolean> {
+    return this.root.columnExists(table, column);
+  }
+
+  /** Closing the connection from inside a transaction is always a bug. */
+  close(): Promise<void> {
+    return Promise.reject(
+      new Error("close() must not be called inside a transaction"),
+    );
+  }
+
+  async transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
+    const savepoint = `sp_${this.depth}`;
+    this.db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = await fn(new NestedTx(this.root, this.db, this.depth + 1));
+      this.db.exec(`RELEASE ${savepoint}`);
+      return result;
+    } catch (e) {
+      this.db.exec(`ROLLBACK TO ${savepoint}`);
+      throw e;
+    }
   }
 }

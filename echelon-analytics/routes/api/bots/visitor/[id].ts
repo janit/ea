@@ -1,9 +1,17 @@
 import { define } from "../../../../utils.ts";
+import { decodeParam } from "../../../../lib/request.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
     const db = ctx.state.db;
-    const visitorId = decodeURIComponent(ctx.params.id).slice(0, 128);
+    const raw = decodeParam(ctx.params.id);
+    if (raw === null) {
+      return Response.json(
+        { error: "invalid_id", message: "Malformed visitor ID" },
+        { status: 400 },
+      );
+    }
+    const visitorId = raw.slice(0, 128);
 
     const views = await db.query(
       `SELECT path, site_id, interaction_ms, device_type, os_name,

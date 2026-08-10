@@ -1,7 +1,7 @@
 # Build context: project root (run with -f confs/Dockerfile .)
 
 # ---- Build stage ----
-FROM denoland/deno:2.7.12 AS build
+FROM denoland/deno:2.9.5 AS build
 WORKDIR /app
 
 # Install dependencies first (better layer caching)
@@ -18,7 +18,7 @@ RUN deno task check
 RUN deno task build
 
 # ---- Runtime stage ----
-FROM denoland/deno:2.7.12 AS runtime
+FROM denoland/deno:2.9.5 AS runtime
 WORKDIR /app
 
 # Built output
