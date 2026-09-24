@@ -26,3 +26,22 @@ export async function refreshConsentCss(db: DbAdapter): Promise<void> {
 export function getConsentCss(siteId: string): string {
   return cache.get(siteId) ?? "";
 }
+
+/**
+ * Neutralise CSS that could make the browser fetch an external resource
+ * (data exfiltration from the page embedding the consent banner).
+ * 1. Strip backslashes to defeat escape bypasses (\75rl → url)
+ * 2. Strip comments, so a comment cannot split a blocked keyword
+ * 3. Block url(), image(), image-set(), element(), paint(), @import,
+ *    @font-face, @keyframes, expression(), behavior:, javascript:,
+ *    -moz-binding:
+ */
+export function sanitizeConsentCss(raw: string): string {
+  return raw
+    .replace(/\\/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(
+      /\burl[\s\S]*?\(|\bimage[\s\S]*?\(|\bimage-set[\s\S]*?\(|-webkit-image-set[\s\S]*?\(|\belement[\s\S]*?\(|\bpaint[\s\S]*?\(|@import\b|@font-face\b|@keyframes\b|\bexpression[\s]*\(|\bbehavior[\s]*:|\bjavascript[\s]*:|-moz-binding[\s]*:/gi,
+      "/* blocked */",
+    );
+}

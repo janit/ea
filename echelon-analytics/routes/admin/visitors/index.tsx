@@ -4,10 +4,14 @@ import { AdminNav } from "../../../components/AdminNav.tsx";
 import { Pagination } from "../../../components/Pagination.tsx";
 import { getLiveStats } from "../../../lib/admin-stats.ts";
 import { paginate } from "../../../lib/pagination.ts";
+import { escapeLike } from "../../../lib/request.ts";
 import type { SQLParam } from "../../../lib/db/adapter.ts";
 import BotActions from "../../../islands/BotActions.tsx";
 import { PUBLIC_MODE } from "../../../lib/config.ts";
 import { formatTime } from "../../../lib/format.ts";
+import { botSql } from "../../../lib/bot-threshold.ts";
+import { scoreBadge } from "../../../components/ScoreBadge.tsx";
+import { submitOnChange } from "../../../components/submitOnChange.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -45,12 +49,12 @@ export const handler = define.handlers({
       conditions.push("MAX(is_returning) = 0");
     }
     if (bot === "suspect") {
-      conditions.push("MAX(bot_score) >= 50");
+      conditions.push(botSql("MAX(bot_score)"));
     } else if (bot === "clean") {
-      conditions.push("MAX(bot_score) < 50");
+      conditions.push(`NOT ${botSql("MAX(bot_score)")}`);
     }
     if (search) {
-      const escaped = search.replace(/[%_]/g, "\\$&");
+      const escaped = escapeLike(search);
       conditions.push("visitor_id LIKE ? ESCAPE '\\'");
       params.push(`%${escaped}%`);
     }
@@ -139,28 +143,19 @@ export const handler = define.handlers({
     );
 
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = {
+    return page({
       ...result,
       devices: devices.map((d) => d.device_type),
       countries: countries.map((c) => c.country_code),
       filters: { device, country, returning, bot, search, sort },
       liveStats,
       baseUrl: ctx.url.href,
-    };
-    return page();
+    });
   },
 });
 
-function scoreBadge(score: number) {
-  const cls = score >= 50
-    ? "bot-score-high"
-    : score >= 25
-    ? "bot-score-med"
-    : "bot-score-low";
-  return <span class={`bot-score-badge ${cls}`}>{score}</span>;
-}
-
-export default define.page<typeof handler>(function VisitorsPage({ state }) {
+export default define.page<typeof handler>(function VisitorsPage(props) {
+  const { data, state } = props;
   const {
     rows,
     total,
@@ -171,7 +166,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
     filters,
     liveStats,
     baseUrl,
-  } = state.pageData;
+  } = data;
 
   return (
     <AdminNav
@@ -188,7 +183,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
         <select
           name="device"
           class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
-          onchange="this.form.submit()"
+          {...submitOnChange}
         >
           <option value="">All devices</option>
           {devices.map((d: string) => (
@@ -201,7 +196,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
         <select
           name="country"
           class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
-          onchange="this.form.submit()"
+          {...submitOnChange}
         >
           <option value="">All countries</option>
           {countries.map((c: string) => (
@@ -214,7 +209,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
         <select
           name="returning"
           class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
-          onchange="this.form.submit()"
+          {...submitOnChange}
         >
           <option value="" selected={!filters.returning}>All visitors</option>
           <option
@@ -231,7 +226,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
         <select
           name="bot"
           class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
-          onchange="this.form.submit()"
+          {...submitOnChange}
         >
           <option value="" selected={!filters.bot}>All scores</option>
           <option value="suspect" selected={filters.bot === "suspect"}>
@@ -245,7 +240,7 @@ export default define.page<typeof handler>(function VisitorsPage({ state }) {
         <select
           name="sort"
           class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
-          onchange="this.form.submit()"
+          {...submitOnChange}
         >
           <option value="time_desc" selected={filters.sort === "time_desc"}>
             Last seen

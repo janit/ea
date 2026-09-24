@@ -7,11 +7,11 @@ const ITERATIONS = 600_000;
 const KEY_LENGTH = 32; // 256 bits
 const SALT_LENGTH = 16; // 128 bits
 
-function toBase64(buf: ArrayBuffer): string {
+function toBase64(buf: ArrayBuffer | Uint8Array): string {
   return btoa(String.fromCharCode(...new Uint8Array(buf)));
 }
 
-function fromBase64(s: string): Uint8Array {
+function fromBase64(s: string): Uint8Array<ArrayBuffer> {
   const bin = atob(s);
   const buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
@@ -20,7 +20,7 @@ function fromBase64(s: string): Uint8Array {
 
 async function deriveKey(
   password: string,
-  salt: Uint8Array,
+  salt: Uint8Array<ArrayBuffer>,
   iterations: number,
 ): Promise<ArrayBuffer> {
   const keyMaterial = await crypto.subtle.importKey(
@@ -57,8 +57,8 @@ export async function verifyPassword(
 
   // A malformed (non-base64) stored hash must reject cleanly, not throw —
   // otherwise an operator typo in ECHELON_PASSWORD_HASH 500s every login.
-  let salt: Uint8Array;
-  let expected: Uint8Array;
+  let salt: Uint8Array<ArrayBuffer>;
+  let expected: Uint8Array<ArrayBuffer>;
   try {
     salt = fromBase64(parts[2]);
     expected = fromBase64(parts[3]);

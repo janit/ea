@@ -17,13 +17,13 @@ export const handler = define.handlers({
        LIMIT 500`,
     );
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = { rows, liveStats };
-    return page();
+    return page({ rows, liveStats });
   },
 });
 
-export default define.page<typeof handler>(function ExcludedPage({ state }) {
-  const { rows, liveStats } = state.pageData;
+export default define.page<typeof handler>(function ExcludedPage(props) {
+  const { data, state } = props;
+  const { rows, liveStats } = data;
 
   return (
     <AdminNav
@@ -99,7 +99,9 @@ export default define.page<typeof handler>(function ExcludedPage({ state }) {
         </table>
       </div>
       {rows.length === 0 && (
-        <p class="text-[var(--ea-muted)] text-sm mt-4">No excluded visitors.</p>
+        <p class="text-[var(--ea-muted)] text-sm mt-4">
+          No excluded visitors.
+        </p>
       )}
     </AdminNav>
   );

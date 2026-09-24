@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
-import { handleEvents } from "@/lib/events-endpoint.ts";
-import { createTestDb } from "./_helpers.ts";
+import { flushRemainingEvents, handleEvents } from "@/lib/events-endpoint.ts";
+import { createTestDb, solvePow } from "./_helpers.ts";
 
 function eventRequest(
   body: unknown,
@@ -106,6 +106,46 @@ Deno.test("handleEvents — no events field → 204 (no-op)", async () => {
 
   const resp = await handleEvents(req, db);
   assertEquals(resp.status, 204);
+  await db.close();
+});
+
+// ── Hostile JSON shapes ─────────────────────────────────────────────────────
+
+for (
+  const body of [null, 42, "str", { events: [null] }, { events: [1, "x"] }]
+) {
+  Deno.test(`handleEvents — ${JSON.stringify(body)} body → 204, no throw`, async () => {
+    const db = createTestDb();
+    const resp = await handleEvents(eventRequest(body), db);
+    assertEquals(resp.status, 204);
+    await db.close();
+  });
+}
+
+Deno.test("handleEvents — null entry does not abort the batch midway", async () => {
+  const db = createTestDb();
+  const site = "null-entry-site";
+  const sid = "0d9e8f7a-6b5c-4d3e-8f1a-2b3c4d5e6f70";
+  const tok = await solvePow(site, sid);
+  const resp = await handleEvents(
+    eventRequest({
+      siteId: site,
+      tok,
+      events: [
+        { type: "click", sessionId: sid },
+        null,
+        { type: "click", sessionId: sid },
+      ],
+    }),
+    db,
+  );
+  assertEquals(resp.status, 204);
+  await flushRemainingEvents(db);
+  const row = await db.queryOne<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM semantic_events WHERE site_id = ?",
+    site,
+  );
+  assertEquals(row?.n, 2);
   await db.close();
 });
 

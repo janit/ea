@@ -100,9 +100,11 @@ HMAC hash of IP + User-Agent + site ID. The hash resets every day — there is n
 cross-day tracking and no cookies are set. This means no cookie consent banners
 are needed under GDPR/ePrivacy.
 
-If you need persistent visitor identity (returning visitor detection), opt in
-with `data-cookie` — this sets an HttpOnly cookie and requires appropriate
-consent.
+The no-consent point applies to cookieless mode only. If you need persistent
+visitor identity (returning visitor detection), opt in with `data-cookie` — this
+sets a 30-day cookie and requires visitor consent. Set
+`ECHELON_COOKIE_CONSENT=true` so the tracker shows a consent banner before
+setting it; without that flag, `data-cookie` sets the cookie immediately.
 
 All analytics data lives in a single SQLite database with WAL mode for
 concurrent access.
@@ -429,6 +431,8 @@ Two independent auth modes (can be used simultaneously):
 | `ECHELON_TRUST_GEO_HEADERS`        | `false`              | Trust CloudFront/generic geo headers                         |
 | `ECHELON_COOKIE_CONSENT`           | `false`              | Show consent banner before setting visitor cookie            |
 | `ECHELON_IGNORED_SITES`            | _(empty)_            | Site IDs to silently discard (+ always `smoke-test`)         |
+| `ECHELON_ALLOWED_SITES`            | _(empty = all)_      | Site IDs to accept; tracking for any other site is dropped   |
+| `ECHELON_DEBUG`                    | `false`              | Verbose debug logging (PoW, scoring, events)                 |
 | `ECHELON_SITE_SUSPECT_COUNTRIES`   | _(empty)_            | Per-site suspect countries (`site:CC,CC;site:CC`)            |
 | `ECHELON_CHALLENGE_WINDOW_MINUTES` | `10`                 | PoW challenge validity window (minutes)                      |
 | `ECHELON_LIVE_STATS_MINUTES`       | `10`                 | Admin nav live stats window (minutes)                        |

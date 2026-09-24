@@ -189,7 +189,7 @@
 <h2>Visitor Identity</h2>
 
 <h3>Cookieless (default)</h3>
-<p>HMAC-SHA256 of IP + User-Agent + site ID + date, truncated to 16-char hex. Resets daily — no cross-day tracking. Requires no cookie consent.</p>
+<p>HMAC-SHA256 of IP + User-Agent + site ID + date, truncated to 16-char hex. Resets daily — no cross-day tracking. Requires no cookie consent. Applies to the default cookieless mode only: with <code>data-cookie</code> a persistent cookie is set, which needs visitor consent — set <code>ECHELON_COOKIE_CONSENT=true</code> to show a consent banner first.</p>
 
 <h3>Cookie (opt-in)</h3>
 <p>HttpOnly <code>_ev</code> cookie with a 16-char hex value, 30-day TTL. Enabled with <code>data-cookie</code> on the script tag.</p>

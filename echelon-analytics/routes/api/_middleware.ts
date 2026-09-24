@@ -12,7 +12,7 @@ import { getSession } from "../../lib/session.ts";
 import { getCookie } from "../../lib/cookie.ts";
 
 /** Auth for /api/* routes — Bearer token or session cookie. */
-export const handler = define.handlers([
+export const handler = define.middleware([
   (ctx) => {
     const url = new URL(ctx.req.url);
 

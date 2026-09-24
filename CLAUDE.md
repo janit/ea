@@ -37,7 +37,7 @@ deno task test:e2e
 # Individual checks
 deno fmt --check .
 deno lint .
-deno check main.ts
+deno check main.ts mcp-server.ts routes/ lib/ islands/ components/
 
 # Update Fresh framework
 deno task update
@@ -94,9 +94,11 @@ Two writers: one for `visitor_views`, one for `semantic_events`. The `stop()`
 method drains any remaining buffered records before shutdown; on total flush
 failure it logs a CRITICAL message with the exact record count and clears the
 buffer. Daily rollup at 03:00 UTC aggregates raw views into
-`visitor_views_daily` (using INSERT OR REPLACE so re-rollups after bot
-correlator corrections update stale aggregates) and purges old data (90-day
-default retention, configurable separately for bot-scored data via
+`visitor_views_daily` and purges old data. Each date is re-rolled from its raw
+rows just before they are purged, so the surviving aggregate reflects later
+bot-correlator and exclusion corrections; `getOverview` reads raw rows for every
+date still in retention and the rollup only for purged dates (90-day default
+retention, configurable separately for bot-scored data via
 `ECHELON_BOT_RETENTION_DAYS`). Purge covers all bot_score ranges including
 negative values (server-ingested events use bot_score=-1).
 
@@ -141,7 +143,9 @@ Multi-layer detection with synchronous and asynchronous components:
    instances.
 6. **Heuristic scoring** — `lib/bot-score.ts` scores every request using timing,
    geo, headers, burst detection, screen dimensions, Cloudflare signals. Scores
-   ≥ 50 are excluded from rollups.
+   ≥ 50 are excluded from rollups. The cut-off and its SQL predicates
+   (`CLEAN_SQL`, `BOT_SQL`) live in `lib/bot-threshold.ts` — never hand-type
+   `BETWEEN 0 AND 49`; the partial index must match the query text exactly.
 7. **No-event bounce detection** — during each correlator sweep, `visitor_views`
    records aged 5–30 minutes with zero matching `semantic_events` receive +15
    penalty. Real users trigger scroll, click, hover, or web vital events within

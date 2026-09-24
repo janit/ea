@@ -1,4 +1,5 @@
 import { useSignal } from "@preact/signals";
+import { scoreBadge } from "../components/ScoreBadge.tsx";
 
 interface Props {
   viewId?: number;
@@ -18,15 +19,6 @@ const FACTOR_LABELS: Record<string, string> = {
   pow: "PoW Token",
   pow_result: "PoW Result",
 };
-
-function scoreBadge(score: number) {
-  const cls = score >= 50
-    ? "bot-score-high"
-    : score >= 25
-    ? "bot-score-med"
-    : "bot-score-low";
-  return <span class={`bot-score-badge ${cls}`}>{score}</span>;
-}
 
 export default function BotScoreDetail({ viewId, eventId, score }: Props) {
   const open = useSignal(false);

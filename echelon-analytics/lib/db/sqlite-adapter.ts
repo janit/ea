@@ -16,34 +16,62 @@ function toSqlite(params: SQLParam[]): SqliteValue[] {
 export class SqliteAdapter implements DbAdapter {
   private db: DatabaseSync;
   private txQueue: Promise<unknown> = Promise.resolve();
+  private txOpen = false;
 
   constructor(db: DatabaseSync) {
     this.db = db;
   }
 
+  // There is one connection, so a statement issued while a transaction is
+  // open (its callback awaiting between statements) would run *inside* it:
+  // a write reported to its caller as done, then undone by the other
+  // transaction's ROLLBACK; a read seeing rows that may never commit. While
+  // a transaction is open, top-level statements queue behind it instead.
+  // The transaction's own statements go through NestedTx, which calls the
+  // _direct methods.
+  private gate<T>(op: () => T): Promise<T> {
+    if (!this.txOpen) {
+      try {
+        return Promise.resolve(op());
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    }
+    const queued = this.txQueue.then(op, op);
+    this.txQueue = queued.then(() => {}, () => {});
+    return queued;
+  }
+
   query<T>(sql: string, ...params: SQLParam[]): Promise<T[]> {
-    return Promise.resolve(
-      this.db.prepare(sql).all(...toSqlite(params)) as unknown as T[],
-    );
+    return this.gate(() => this._queryDirect<T>(sql, params));
   }
 
   queryOne<T>(sql: string, ...params: SQLParam[]): Promise<T | undefined> {
-    return Promise.resolve(
-      this.db.prepare(sql).get(...toSqlite(params)) as T | undefined,
-    );
+    return this.gate(() => this._queryOneDirect<T>(sql, params));
   }
 
   run(sql: string, ...params: SQLParam[]): Promise<RunResult> {
-    const result = this.db.prepare(sql).run(...toSqlite(params));
-    return Promise.resolve({
-      lastInsertId: result.lastInsertRowid,
-      changes: Number(result.changes),
-    });
+    return this.gate(() => this._runDirect(sql, params));
   }
 
   exec(sql: string): Promise<void> {
-    this.db.exec(sql);
-    return Promise.resolve();
+    return this.gate(() => this.db.exec(sql));
+  }
+
+  _queryDirect<T>(sql: string, params: SQLParam[]): T[] {
+    return this.db.prepare(sql).all(...toSqlite(params)) as unknown as T[];
+  }
+
+  _queryOneDirect<T>(sql: string, params: SQLParam[]): T | undefined {
+    return this.db.prepare(sql).get(...toSqlite(params)) as T | undefined;
+  }
+
+  _runDirect(sql: string, params: SQLParam[]): RunResult {
+    const result = this.db.prepare(sql).run(...toSqlite(params));
+    return {
+      lastInsertId: result.lastInsertRowid,
+      changes: Number(result.changes),
+    };
   }
 
   /**
@@ -73,6 +101,7 @@ export class SqliteAdapter implements DbAdapter {
     fn: (tx: DbAdapter) => Promise<T>,
   ): Promise<T> {
     this.db.exec("BEGIN");
+    this.txOpen = true;
     try {
       const result = await fn(new NestedTx(this, this.db, 1));
       this.db.exec("COMMIT");
@@ -80,6 +109,8 @@ export class SqliteAdapter implements DbAdapter {
     } catch (e) {
       this.db.exec("ROLLBACK");
       throw e;
+    } finally {
+      this.txOpen = false;
     }
   }
 
@@ -115,19 +146,20 @@ class NestedTx implements DbAdapter {
   ) {}
 
   query<T>(sql: string, ...params: SQLParam[]): Promise<T[]> {
-    return this.root.query<T>(sql, ...params);
+    return Promise.resolve(this.root._queryDirect<T>(sql, params));
   }
 
   queryOne<T>(sql: string, ...params: SQLParam[]): Promise<T | undefined> {
-    return this.root.queryOne<T>(sql, ...params);
+    return Promise.resolve(this.root._queryOneDirect<T>(sql, params));
   }
 
   run(sql: string, ...params: SQLParam[]): Promise<RunResult> {
-    return this.root.run(sql, ...params);
+    return Promise.resolve(this.root._runDirect(sql, params));
   }
 
   exec(sql: string): Promise<void> {
-    return this.root.exec(sql);
+    this.db.exec(sql);
+    return Promise.resolve();
   }
 
   columnExists(table: string, column: string): Promise<boolean> {

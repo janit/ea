@@ -32,7 +32,11 @@ import {
   matchesAiCrawlerFeed,
   matchesCrawlerFeed,
 } from "./threat-feeds.ts";
-import { BufferedWriter } from "./buffered-writer.ts";
+import {
+  BufferedWriter,
+  CHUNKS_PER_YIELD,
+  yieldToEventLoop,
+} from "./buffered-writer.ts";
 import { isUtmCampaignActive } from "./utm.ts";
 import { debug } from "./debug.ts";
 
@@ -104,8 +108,8 @@ import type { SQLParam } from "./db/adapter.ts";
 const EVENT_COLS = `(event_type, site_id, session_id, visitor_id, data,
    experiment_id, variant_id, utm_campaign,
    device_type, referrer, hour, month, day_of_week,
-   is_returning, bot_score, bot_score_detail)`;
-const EVENT_COL_COUNT = 16;
+   is_returning, bot_score, bot_score_detail, created_at)`;
+const EVENT_COL_COUNT = 17;
 const CHUNK_SIZE = 50;
 const ONE_ROW = `(${Array(EVENT_COL_COUNT).fill("?").join(",")})`;
 
@@ -127,6 +131,7 @@ function eventParams(ev: SemanticEvent): SQLParam[] {
     ev.is_returning,
     ev.bot_score,
     ev.bot_score_detail ?? null,
+    ev.created_at,
   ];
 }
 
@@ -141,6 +146,9 @@ const eventWriter = new BufferedWriter<SemanticEvent>(
         const params: SQLParam[] = [];
         for (const ev of chunk) params.push(...eventParams(ev));
         await tx.run(sql, ...params);
+        if ((i / CHUNK_SIZE + 1) % CHUNKS_PER_YIELD === 0) {
+          await yieldToEventLoop();
+        }
       }
     });
   },
@@ -210,8 +218,15 @@ export async function handleEvents(
     return new Response(null, { status: 400 });
   }
 
-  const events = body.events;
-  if (!Array.isArray(events) || events.length === 0) {
+  // JSON.parse yields any JSON value: `null` and `[null]` elements must not
+  // reach property access below (this endpoint is unauthenticated).
+  if (body === null || typeof body !== "object") {
+    return new Response(null, { status: 204 });
+  }
+  const events = Array.isArray(body.events)
+    ? body.events.filter((e) => e !== null && typeof e === "object")
+    : [];
+  if (events.length === 0) {
     return new Response(null, { status: 204 });
   }
 
@@ -389,6 +404,7 @@ export async function handleEvents(
       is_returning: isReturning ? 1 : 0,
       bot_score: botScore,
       bot_score_detail: botScoreDetail,
+      created_at: new Date().toISOString(),
     };
     if (shouldAnonymize(siteId)) {
       eventRecord = await anonymizeEvent(eventRecord);

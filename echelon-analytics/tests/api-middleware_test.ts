@@ -1,97 +1,88 @@
-// API middleware tests.
-// Default config: SECRET="", AUTH_USERNAME="", PUBLIC_MODE=false
-// This tests the "no auth configured" path which returns 401.
+// The real /api auth middleware under each auth configuration.
 
 import { assertEquals } from "@std/assert";
-import { constantTimeEquals } from "@/lib/config.ts";
-import { createSession, getSession } from "@/lib/session.ts";
-import { getCookie } from "@/lib/cookie.ts";
+import { probeApiAuth } from "./_helpers.ts";
 
-// We can't easily instantiate the Fresh middleware handler directly,
-// so we test the underlying auth logic components that the middleware uses.
-
-// ── Bearer token auth (constantTimeEquals) ──────────────────────────────────
-
-Deno.test("API auth — constantTimeEquals accepts valid token", () => {
-  const secret = "my-secret-token-123";
-  const candidate = "my-secret-token-123";
-  assertEquals(constantTimeEquals(candidate, secret), true);
+Deno.test("API auth — nothing configured: 401 except /api/health", async () => {
+  const results = await probeApiAuth({}, [
+    { method: "GET", path: "/api/stats/overview" },
+    { method: "GET", path: "/api/health" },
+  ]);
+  assertEquals(results.map((r) => r.status), [401, 200]);
 });
 
-Deno.test("API auth — constantTimeEquals rejects invalid token", () => {
-  const secret = "my-secret-token-123";
-  const candidate = "wrong-token";
-  assertEquals(constantTimeEquals(candidate, secret), false);
+Deno.test("API auth — bearer token: right token passes, wrong or missing does not", async () => {
+  const env = { ECHELON_SECRET: "s3cret-token" };
+  const results = await probeApiAuth(env, [
+    {
+      method: "GET",
+      path: "/api/stats/overview",
+      headers: { authorization: "Bearer s3cret-token" },
+    },
+    {
+      method: "GET",
+      path: "/api/stats/overview",
+      headers: { authorization: "Bearer s3cret-tokeN" },
+    },
+    { method: "GET", path: "/api/stats/overview" },
+    {
+      method: "GET",
+      path: "/api/stats/overview",
+      headers: { authorization: "s3cret-token" },
+    },
+  ]);
+  assertEquals(results.map((r) => r.status), [200, 401, 401, 401]);
 });
 
-// ── Session cookie auth ─────────────────────────────────────────────────────
-
-Deno.test("API auth — session cookie validated via getSession", () => {
-  const { token } = createSession("apiuser");
-  assertEquals(getSession(token) !== undefined, true);
-  assertEquals(getSession("invalid-token"), undefined);
+Deno.test("API auth — bearer auth is exempt from CSRF (no cookie involved)", async () => {
+  const [r] = await probeApiAuth({ ECHELON_SECRET: "s3cret-token" }, [
+    {
+      method: "POST",
+      path: "/api/campaigns",
+      headers: {
+        authorization: "Bearer s3cret-token",
+        origin: "https://evil.example",
+      },
+    },
+  ]);
+  assertEquals(r.status, 200);
 });
 
-Deno.test("API auth — getCookie extracts echelon_session", () => {
-  const cookieHeader = `echelon_session=abc-123; other=value`;
-  assertEquals(getCookie(cookieHeader, "echelon_session"), "abc-123");
+Deno.test("API auth — session cookie: reads pass, forged session fails", async () => {
+  const env = { ECHELON_USERNAME: "admin" };
+  const results = await probeApiAuth(env, [
+    { method: "GET", path: "/api/stats/overview", session: true },
+    {
+      method: "GET",
+      path: "/api/stats/overview",
+      headers: { cookie: "echelon_session=forged" },
+    },
+  ]);
+  assertEquals(results.map((r) => r.status), [200, 401]);
 });
 
-// ── CSRF origin check logic ─────────────────────────────────────────────────
-
-Deno.test("CSRF — origin host matches request host → passes", () => {
-  const origin = "https://analytics.example.com";
-  const requestHost = "analytics.example.com";
-  const originHost = new URL(origin).host;
-  assertEquals(originHost === requestHost, true);
-});
-
-Deno.test("CSRF — origin host mismatch → fails", () => {
-  const origin = "https://evil.com";
-  const requestHost = "analytics.example.com";
-  const originHost = new URL(origin).host;
-  assertEquals(originHost === requestHost, false);
-});
-
-Deno.test("CSRF — protocol mismatch but same host → passes", () => {
-  // Behind reverse proxy: internal http vs external https
-  const origin = "http://analytics.example.com";
-  const requestHost = "analytics.example.com";
-  const originHost = new URL(origin).host;
-  assertEquals(originHost === requestHost, true);
-});
-
-Deno.test("CSRF — origin with port matches host with port", () => {
-  const origin = "https://analytics.example.com:8443";
-  const requestHost = "analytics.example.com:8443";
-  const originHost = new URL(origin).host;
-  assertEquals(originHost === requestHost, true);
-});
-
-Deno.test("CSRF — referer fallback when origin header missing", () => {
-  const referer = "https://analytics.example.com/admin/settings";
-  const requestHost = "analytics.example.com";
-  const refererHost = new URL(referer).host;
-  assertEquals(refererHost === requestHost, true);
-});
-
-// ── PUBLIC_MODE logic (default: off) ────────────────────────────────────────
-
-Deno.test("PUBLIC_MODE — default is false (non-public)", () => {
-  const publicMode = Deno.env.get("ECHELON_PUBLIC_MODE") === "true";
-  assertEquals(publicMode, false);
-});
-
-// ── Health endpoint ─────────────────────────────────────────────────────────
-
-Deno.test("Health endpoint — /api/health path detected correctly", () => {
-  const url = new URL("https://analytics.example.com/api/health");
-  assertEquals(url.pathname, "/api/health");
-});
-
-// ── Telemetry exempt from PUBLIC_MODE write block ───────────────────────────
-
-Deno.test("Telemetry path — /api/telemetry detected correctly", () => {
-  const url = new URL("https://analytics.example.com/api/telemetry");
-  assertEquals(url.pathname, "/api/telemetry");
+Deno.test("API auth — session cookie writes are CSRF-checked", async () => {
+  const env = { ECHELON_USERNAME: "admin" };
+  const results = await probeApiAuth(env, [
+    {
+      method: "POST",
+      path: "/api/campaigns",
+      session: true,
+      headers: { origin: "https://analytics.example.com" },
+    },
+    {
+      method: "POST",
+      path: "/api/campaigns",
+      session: true,
+      headers: { origin: "https://evil.example" },
+    },
+    { method: "POST", path: "/api/campaigns", session: true },
+    {
+      method: "DELETE",
+      path: "/api/campaigns/x",
+      session: true,
+      headers: { referer: "https://analytics.example.com/admin" },
+    },
+  ]);
+  assertEquals(results.map((r) => r.status), [200, 403, 403, 200]);
 });

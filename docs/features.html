@@ -346,7 +346,7 @@ window.echelon.track("purchase", {
   <li>Cannot be reversed to recover the original IP</li>
   <li>Requires no cookie consent (GDPR/ePrivacy compliant)</li>
 </ul>
-<p>Add <code>data-cookie</code> to enable a persistent visitor cookie for returning visitor tracking.</p>
+<p>Add <code>data-cookie</code> to enable a persistent visitor cookie for returning visitor tracking. The no-consent point above applies to cookieless mode only: the cookie needs visitor consent, so set <code>ECHELON_COOKIE_CONSENT=true</code> to show a consent banner first — without it, <code>data-cookie</code> sets the cookie immediately.</p>
 
 <h2>Admin Dashboard</h2>
 <p>The admin UI at <code>/admin/</code> provides a full-featured analytics dashboard:</p>

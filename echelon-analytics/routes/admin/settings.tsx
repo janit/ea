@@ -19,18 +19,18 @@ export const handler = define.handlers({
       site,
     );
 
-    ctx.state.pageData = {
+    return page({
       site,
       consentCss: row?.consent_css ?? "",
       liveStats,
       debugEnabled: isDebugEnabled(),
-    };
-    return page();
+    });
   },
 });
 
-export default define.page<typeof handler>(function SettingsPage({ state }) {
-  const { site, consentCss, liveStats, debugEnabled } = state.pageData;
+export default define.page<typeof handler>(function SettingsPage(props) {
+  const { data, state } = props;
+  const { site, consentCss, liveStats, debugEnabled } = data;
 
   return (
     <AdminNav
@@ -60,8 +60,9 @@ export default define.page<typeof handler>(function SettingsPage({ state }) {
         </p>
         <p>
           Requires{" "}
-          <code class="text-[var(--ea-text)]">ECHELON_COOKIE_CONSENT=true</code>
-          {" "}
+          <code class="text-[var(--ea-text)]">
+            ECHELON_COOKIE_CONSENT=true
+          </code>{" "}
           and <code class="text-[var(--ea-text)]">data-cookie</code>{" "}
           on the script tag.
         </p>

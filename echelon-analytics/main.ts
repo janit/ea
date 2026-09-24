@@ -1,4 +1,4 @@
-// Echelon Analytics — Fresh 2.2.0 Entry Point
+// Echelon Analytics — Fresh 2 Entry Point
 //
 // IMPORTANT: This app uses in-memory state (session store, rate limiter,
 // buffered writers, caches). When using `deno serve`, run with a single

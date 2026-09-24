@@ -269,6 +269,69 @@ Deno.test("purgeExpiredData — purges old daily rollups", async () => {
   await db.close();
 });
 
+Deno.test("purgeExpiredData — re-rolls a date from corrected raw rows before purging it", async () => {
+  const db = createTestDb();
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 100);
+  const date = d.toISOString().slice(0, 10);
+
+  await insertView(db, {
+    visitor_id: "human-1",
+    created_at: `${date}T10:00:00.000Z`,
+  });
+  await insertView(db, {
+    visitor_id: "later-bot",
+    created_at: `${date}T11:00:00.000Z`,
+  });
+  await rollupDay(db, date);
+
+  // After the nightly rollup, the correlator reclassifies one visitor — the
+  // stored aggregate is now stale.
+  await db.run(
+    `UPDATE visitor_views SET bot_score = 80 WHERE visitor_id = 'later-bot'`,
+  );
+
+  await purgeExpiredData(db, 90);
+
+  const agg = await db.queryOne<{ visits: number }>(
+    `SELECT SUM(visits) AS visits FROM visitor_views_daily WHERE date = ?`,
+    date,
+  );
+  assertEquals(agg?.visits, 1);
+  const raw = await db.queryOne<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM visitor_views WHERE bot_score BETWEEN 0 AND 49`,
+  );
+  assertEquals(raw?.n, 0);
+  await db.close();
+});
+
+Deno.test("purgeExpiredData — lingering bot rows do not wipe a finalized aggregate", async () => {
+  const db = createTestDb();
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 100);
+  const date = d.toISOString().slice(0, 10);
+
+  await insertView(db, {
+    visitor_id: "human-1",
+    created_at: `${date}T10:00:00.000Z`,
+  });
+  await insertView(db, {
+    visitor_id: "bot-1",
+    bot_score: 80,
+    created_at: `${date}T10:30:00.000Z`,
+  });
+  // Clean rows purged at 90 days, bot rows kept for 365.
+  await purgeExpiredData(db, 90, 365);
+  await purgeExpiredData(db, 90, 365);
+
+  const agg = await db.queryOne<{ visits: number }>(
+    `SELECT SUM(visits) AS visits FROM visitor_views_daily WHERE date = ?`,
+    date,
+  );
+  assertEquals(agg?.visits, 1);
+  await db.close();
+});
+
 Deno.test("purgeExpiredData — empty DB returns all zeros", async () => {
   const db = createTestDb();
   const result = await purgeExpiredData(db);
@@ -276,5 +339,17 @@ Deno.test("purgeExpiredData — empty DB returns all zeros", async () => {
   assertEquals(result.events_deleted, 0);
   assertEquals(result.daily_deleted, 0);
   assertEquals(result.perf_deleted, 0);
+  await db.close();
+});
+
+Deno.test("purgeExpiredData — deletes more rows than one purge batch", async () => {
+  const db = createTestDb();
+  await db.exec(`
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 12001)
+    INSERT INTO visitor_views (visitor_id, path, site_id, is_returning, referrer_type, bot_score, is_pwa, created_at)
+    SELECT 'v' || i, '/', 's', 0, 'direct', 0, 0, '2020-01-01T00:00:00.000Z' FROM n;
+  `);
+  const result = await purgeExpiredData(db, 90);
+  assertEquals(result.views_deleted, 12001);
   await db.close();
 });

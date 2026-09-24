@@ -70,6 +70,7 @@
 <tr><td><code>ECHELON_DB_PATH</code></td><td><code>./echelon.db</code></td><td>Path to SQLite database file</td></tr>
 <tr><td><code>ECHELON_SECRET</code></td><td><em>(empty)</em></td><td>Bearer token for API auth. If unset, PoW tokens won't survive restarts</td></tr>
 <tr><td><code>ECHELON_RETENTION_DAYS</code></td><td><code>90</code></td><td>Days to keep raw <code>visitor_views</code> and <code>semantic_events</code></td></tr>
+<tr><td><code>ECHELON_BOT_RETENTION_DAYS</code></td><td><em>(same as retention)</em></td><td>Days to keep raw rows scored as bots (<code>bot_score</code> &ge; 50) or server-ingested. Set lower to reclaim disk sooner</td></tr>
 </table>
 
 <h2>Authentication</h2>
@@ -104,6 +105,7 @@
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
 <tr><td><code>ECHELON_VIEW_FLUSH_MS</code></td><td><code>15000</code></td><td>Flush interval for pageview buffer (ms)</td></tr>
 <tr><td><code>ECHELON_EVENT_FLUSH_MS</code></td><td><code>10000</code></td><td>Flush interval for event buffer (ms)</td></tr>
+<tr><td><code>ECHELON_SHUTDOWN_TIMEOUT_MS</code></td><td><code>60000</code></td><td>How long shutdown may spend flushing buffers before forcing exit. Keep your container stop grace period longer than this</td></tr>
 </table>
 
 <h2>Network &amp; Proxy</h2>
@@ -141,6 +143,8 @@
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
 <tr><td><code>ECHELON_COOKIE_CONSENT</code></td><td><code>false</code></td><td>Show consent banner before setting visitor cookie</td></tr>
 <tr><td><code>ECHELON_IGNORED_SITES</code></td><td><em>(empty)</em></td><td>Comma-separated site IDs to silently ignore. <code>"smoke-test"</code> always ignored</td></tr>
+<tr><td><code>ECHELON_ALLOWED_SITES</code></td><td><em>(empty)</em></td><td>Comma-separated site IDs to accept. Tracking for any other site ID is silently dropped. Empty = all</td></tr>
+<tr><td><code>ECHELON_DEBUG</code></td><td><code>false</code></td><td>Verbose debug logging (PoW, scoring, events)</td></tr>
 <tr><td><code>ECHELON_TELEMETRY</code></td><td><em>(unset)</em></td><td>Override telemetry: <code>true</code> = force on, <code>false</code> = force off, unset = respect admin choice. See <a href="telemetry.html">Telemetry</a></td></tr>
 </table>
 

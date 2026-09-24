@@ -10,8 +10,6 @@ export interface State {
   days: number;
   telemetryState: TelemetryState;
   url: string;
-  // deno-lint-ignore no-explicit-any
-  pageData: Record<string, any>;
 }
 
 export const define = createDefine<State>();

@@ -4,8 +4,10 @@ import { AdminNav } from "../../../components/AdminNav.tsx";
 import { Pagination } from "../../../components/Pagination.tsx";
 import { getLiveStats } from "../../../lib/admin-stats.ts";
 import { paginate } from "../../../lib/pagination.ts";
+import { escapeLike } from "../../../lib/request.ts";
 import type { SQLParam } from "../../../lib/db/adapter.ts";
 import { formatTime } from "../../../lib/format.ts";
+import { scoreBadge } from "../../../components/ScoreBadge.tsx";
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -44,7 +46,7 @@ export const handler = define.handlers({
       params.push(type);
     }
     if (search) {
-      const escaped = search.replace(/[%_]/g, "\\$&");
+      const escaped = escapeLike(search);
       conditions.push(
         "(event_type LIKE ? ESCAPE '\\' OR data LIKE ? ESCAPE '\\')",
       );
@@ -70,27 +72,18 @@ export const handler = define.handlers({
     });
 
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = {
+    return page({
       ...result,
       typeCounts,
       filters: { type, search },
       liveStats,
       baseUrl: ctx.url.href,
-    };
-    return page();
+    });
   },
 });
 
-function scoreBadge(score: number) {
-  const cls = score >= 50
-    ? "bot-score-high"
-    : score >= 25
-    ? "bot-score-med"
-    : "bot-score-low";
-  return <span class={`bot-score-badge ${cls}`}>{score}</span>;
-}
-
-export default define.page<typeof handler>(function EventsPage({ state }) {
+export default define.page<typeof handler>(function EventsPage(props) {
+  const { data, state } = props;
   const {
     rows,
     total,
@@ -100,7 +93,7 @@ export default define.page<typeof handler>(function EventsPage({ state }) {
     filters,
     liveStats,
     baseUrl,
-  } = state.pageData;
+  } = data;
 
   return (
     <AdminNav

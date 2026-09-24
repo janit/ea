@@ -9,6 +9,7 @@ import { SqliteAdapter } from "./sqlite-adapter.ts";
 import { SCHEMA_SQL } from "./schema.ts";
 import { DB_PATH } from "../config.ts";
 import type { DbAdapter } from "./adapter.ts";
+import { CLEAN_SQL } from "../bot-threshold.ts";
 
 let db: DbAdapter | null = null;
 let initPromise: Promise<DbAdapter> | null = null;
@@ -130,10 +131,18 @@ async function migrate(adapter: DbAdapter): Promise<void> {
   );
 
   // Partial index for bot-filtered queries (speeds up overview, top paths, referrers, etc.)
+  // SQLite uses it only for queries repeating its WHERE clause verbatim, so an
+  // index built under a different BOT_THRESHOLD is dead weight: rebuild it.
+  const cleanIdx = await adapter.queryOne<{ sql: string }>(
+    `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_vv_site_created_clean'`,
+  );
+  if (cleanIdx && !cleanIdx.sql.includes(CLEAN_SQL)) {
+    await adapter.exec(`DROP INDEX idx_vv_site_created_clean`);
+  }
   await adapter.exec(
     `CREATE INDEX IF NOT EXISTS idx_vv_site_created_clean
      ON visitor_views(site_id, created_at)
-     WHERE bot_score BETWEEN 0 AND 49`,
+     WHERE ${CLEAN_SQL}`,
   );
 
   // Add bot_score_detail column for detailed score breakdown

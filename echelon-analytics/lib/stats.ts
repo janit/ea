@@ -4,6 +4,7 @@ import type { DbAdapter } from "./db/adapter.ts";
 import type { ExperimentStats, VariantStats } from "../types.ts";
 import { terminalDisplayName } from "./anonymize.ts";
 import { RETENTION_DAYS } from "./config.ts";
+import { BOT_SQL, CLEAN_SQL, cleanSql } from "./bot-threshold.ts";
 
 /**
  * A/B experiment results with two-proportion z-test significance.
@@ -102,7 +103,7 @@ export async function getExperimentStats(
 }
 
 /** Two-proportion z-test */
-function zTestSignificance(
+export function zTestSignificance(
   c1: number,
   n1: number,
   c2: number,
@@ -142,50 +143,45 @@ export async function getOverview(
   days: number = 30,
 ) {
   const cutoff = daysAgoUTC(days);
-  const today = new Date().toISOString().slice(0, 10);
 
-  // Inside raw retention every figure below is computed from visitor_views
-  // directly. The rollup path is only for windows that reach past retention.
+  // Every figure is raw rows from `rawSince` onward plus rollup rows for the
+  // dates before it. Inside raw retention the rollup range is empty and
+  // everything is raw. Beyond it, only dates whose raw rows are purged come
+  // from visitor_views_daily — every date still in raw retention is raw.
   //
-  // Sourcing the headline from visitor_views_daily (date < today) plus today's
-  // raw meant *yesterday* belonged to neither source until the 03:00 UTC job
-  // ran — so between 00:00 and 03:00 UTC, and for the whole of any day the
-  // rollup failed or was skipped, a full day of traffic was reported as zero.
-  // It also put `visits` and `unique_visitors` on different sources, so they
-  // could disagree with each other.
+  // Splitting at "today" instead left yesterday in neither source until the
+  // 03:00 UTC rollup ran (or all day if it failed), and served rollups that
+  // predate later correlator and exclusion corrections for dates whose
+  // corrected raw rows were still there.
   const useRaw = days <= RETENTION_DAYS;
-  const cutoffTs = cutoff + "T00:00:00Z";
+  const rawFrom = useRaw ? cutoff : daysAgoUTC(RETENTION_DAYS);
+  const rawSince = rawFrom + "T00:00:00Z";
+  // Rollup covers [cutoff, rawFrom) — empty when useRaw.
+  const rollupParams = [siteId, cutoff, rawFrom] as const;
 
-  const totals = useRaw
-    ? await db.queryOne<{ visits: number; avg_interaction_ms: number }>(
-      `SELECT COUNT(*) AS visits,
-              COALESCE(CAST(AVG(CASE WHEN interaction_ms > 0 THEN interaction_ms END) AS INTEGER), 0) AS avg_interaction_ms
-       FROM visitor_views
-       WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
-         ${NOT_EXCLUDED}`,
-      siteId,
-      cutoffTs,
-    )
-    // avg_interaction_ms is visit-weighted (SUM(avg*visits)/SUM(visits)) — a
-    // plain AVG of per-row averages would ignore how many visits each row holds.
-    : await db.queryOne<{ visits: number; avg_interaction_ms: number }>(
-      `SELECT COALESCE(SUM(visits), 0) AS visits,
-              COALESCE(CAST(SUM(avg_interaction_ms * visits) / NULLIF(SUM(visits), 0) AS INTEGER), 0) AS avg_interaction_ms
-       FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?`,
-      siteId,
-      cutoff,
-      today,
-    );
-
-  // Rollup path only: today is never in the rollup, so add it from raw. All
-  // rollup-sourced queries below exclude today (date < today) so a stray today
-  // rollup row cannot be double-counted alongside this.
-  const todayTotals = useRaw ? null : await db.queryOne<{ visits: number }>(
-    `SELECT COUNT(*) AS visits
+  const raw = await db.queryOne<{ visits: number; avg_interaction_ms: number }>(
+    `SELECT COUNT(*) AS visits,
+            COALESCE(CAST(AVG(CASE WHEN interaction_ms > 0 THEN interaction_ms END) AS INTEGER), 0) AS avg_interaction_ms
      FROM visitor_views
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49`,
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
+       ${NOT_EXCLUDED}`,
     siteId,
-    today + "T00:00:00Z",
+    rawSince,
+  );
+  // avg_interaction_ms is visit-weighted (SUM(avg*visits)/SUM(visits)) — a
+  // plain AVG of per-row averages would ignore how many visits each row holds.
+  const rollup = await db.queryOne<{ visits: number; ms_total: number }>(
+    `SELECT COALESCE(SUM(visits), 0) AS visits,
+            COALESCE(SUM(avg_interaction_ms * visits), 0) AS ms_total
+     FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?`,
+    ...rollupParams,
+  );
+  const rawVisits = raw?.visits ?? 0;
+  const rollupVisits = rollup?.visits ?? 0;
+  const visits = rawVisits + rollupVisits;
+  const avgInteractionMs = visits === 0 ? 0 : Math.trunc(
+    ((raw?.avg_interaction_ms ?? 0) * rawVisits + (rollup?.ms_total ?? 0)) /
+      visits,
   );
 
   // Unique visitors over the period. Distinct counts are not additively
@@ -193,29 +189,36 @@ export async function getOverview(
   // summing double-counts visitors active on multiple days, MAX-per-day drops
   // visitors who only appear in non-largest buckets. When the whole window is
   // still within raw retention we count distinct visitor_id from raw directly
-  // (exact). Beyond retention the raw rows are purged, so we fall back to the
-  // rollup estimate (sum of per-day distinct = "visitor-days").
+  // (exact). Beyond retention the raw rows are purged, so the figure becomes
+  // "visitor-days": per-day distinct from raw, plus the rollup estimate.
   let uniqueVisitors: number;
   if (useRaw) {
     const u = await db.queryOne<{ unique_visitors: number }>(
       `SELECT COUNT(DISTINCT visitor_id) AS unique_visitors
        FROM visitor_views
-       WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+       WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
          ${NOT_EXCLUDED}`,
       siteId,
-      cutoffTs,
+      rawSince,
     );
     uniqueVisitors = u?.unique_visitors ?? 0;
   } else {
-    const rollupVisitors = await db.queryOne<{ unique_visitors: number }>(
-      `SELECT COALESCE(SUM(uv), 0) AS unique_visitors
-       FROM (SELECT date, MAX(unique_visitors) AS uv
-             FROM visitor_views_daily WHERE site_id = ? AND date >= ?
-             GROUP BY date)`,
+    const u = await db.queryOne<{ unique_visitors: number }>(
+      `SELECT
+         (SELECT COALESCE(SUM(uv), 0) FROM (
+            SELECT COUNT(DISTINCT visitor_id) AS uv FROM visitor_views
+            WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
+              ${NOT_EXCLUDED}
+            GROUP BY substr(created_at, 1, 10)))
+       + (SELECT COALESCE(SUM(uv), 0) FROM (
+            SELECT MAX(unique_visitors) AS uv FROM visitor_views_daily
+            WHERE site_id = ? AND date >= ? AND date < ?
+            GROUP BY date)) AS unique_visitors`,
       siteId,
-      cutoff,
+      rawSince,
+      ...rollupParams,
     );
-    uniqueVisitors = rollupVisitors?.unique_visitors ?? 0;
+    uniqueVisitors = u?.unique_visitors ?? 0;
   }
 
   // Limit path scan to max 7 days of raw data for performance
@@ -226,62 +229,61 @@ export async function getOverview(
     visitors: number;
   }>(
     `SELECT path, COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
-     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}
      GROUP BY path ORDER BY views DESC LIMIT 20`,
     siteId,
     pathCutoff + "T00:00:00Z",
   );
 
-  const devices = useRaw
-    ? await db.query<{ device_type: string; visits: number }>(
-      `SELECT COALESCE(device_type, 'unknown') AS device_type, COUNT(*) AS visits
+  const devices = await db.query<{ device_type: string; visits: number }>(
+    `SELECT device_type, SUM(visits) AS visits FROM (
+       SELECT COALESCE(device_type, 'unknown') AS device_type, COUNT(*) AS visits
        FROM visitor_views
-       WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+       WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
          ${NOT_EXCLUDED}
-       GROUP BY device_type ORDER BY visits DESC`,
-      siteId,
-      cutoffTs,
-    )
-    : await db.query<{ device_type: string; visits: number }>(
-      `SELECT device_type, SUM(visits) AS visits
-       FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?
-       GROUP BY device_type ORDER BY visits DESC`,
-      siteId,
-      cutoff,
-      today,
-    );
+       GROUP BY 1
+       UNION ALL
+       SELECT device_type, SUM(visits) FROM visitor_views_daily
+       WHERE site_id = ? AND date >= ? AND date < ?
+       GROUP BY 1)
+     GROUP BY device_type ORDER BY visits DESC`,
+    siteId,
+    rawSince,
+    ...rollupParams,
+  );
 
+  // Raw visitors are COUNT(DISTINCT) (exact). The rollup's SUM(unique_visitors)
+  // is not a visitor count — beacon.ts sets is_returning=0 on a visitor's first
+  // view that day and 1 on every later one, so anyone viewing two pages lands in
+  // two buckets — but it is all that survives for purged dates.
   const countries = await db.query<{
     country_code: string;
     visits: number;
     visitors: number;
   }>(
-    useRaw
-      // SUM(unique_visitors) over the rollup buckets is not a visitor count:
-      // beacon.ts sets is_returning=0 on a visitor's first view that day and 1
-      // on every later one, so anyone viewing two pages lands in two buckets
-      // and is counted twice. COUNT(DISTINCT) on raw is exact.
-      ? `SELECT COALESCE(country_code, 'unknown') AS country_code,
-                COUNT(*) AS visits, COUNT(DISTINCT visitor_id) AS visitors
-         FROM visitor_views
-         WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
-           AND COALESCE(country_code, 'unknown') != 'unknown'
-           ${NOT_EXCLUDED}
-         GROUP BY country_code ORDER BY visits DESC LIMIT 10`
-      : `SELECT country_code, SUM(visits) AS visits, SUM(unique_visitors) AS visitors
-         FROM visitor_views_daily
-         WHERE site_id = ? AND date >= ? AND date < ? AND country_code != 'unknown'
-         GROUP BY country_code ORDER BY visits DESC LIMIT 10`,
+    `SELECT country_code, SUM(visits) AS visits, SUM(visitors) AS visitors FROM (
+       SELECT country_code, COUNT(*) AS visits, COUNT(DISTINCT visitor_id) AS visitors
+       FROM visitor_views
+       WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
+         AND COALESCE(country_code, 'unknown') != 'unknown'
+         ${NOT_EXCLUDED}
+       GROUP BY country_code
+       UNION ALL
+       SELECT country_code, SUM(visits), SUM(unique_visitors)
+       FROM visitor_views_daily
+       WHERE site_id = ? AND date >= ? AND date < ? AND country_code != 'unknown'
+       GROUP BY country_code)
+     GROUP BY country_code ORDER BY visits DESC LIMIT 10`,
     siteId,
-    useRaw ? cutoffTs : cutoff,
-    ...(useRaw ? [] : [today]),
+    rawSince,
+    ...rollupParams,
   );
 
   // Limit referrer scan to max 7 days of raw data for performance
   const referrers = await db.query<{ referrer_type: string; views: number }>(
     `SELECT referrer_type, COUNT(*) AS views
-     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}
      GROUP BY referrer_type ORDER BY views DESC`,
     siteId,
@@ -294,7 +296,7 @@ export async function getOverview(
     visitors: number;
   }>(
     `SELECT COALESCE(os_name, 'Unknown') AS os_name, COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
-     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}
      GROUP BY os_name ORDER BY views DESC LIMIT 20`,
     siteId,
@@ -308,7 +310,7 @@ export async function getOverview(
   }>(
     `SELECT COALESCE(browser_name || ' ' || browser_version, browser_name, 'Unknown') AS browser,
             COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
-     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}
      GROUP BY browser ORDER BY views DESC LIMIT 20`,
     siteId,
@@ -322,39 +324,42 @@ export async function getOverview(
   }>(
     `SELECT (COALESCE(screen_width, 0) || 'x' || COALESCE(screen_height, 0)) AS resolution,
             COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
-     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     FROM visitor_views WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}
      GROUP BY resolution ORDER BY views DESC LIMIT 20`,
     siteId,
     pathCutoff + "T00:00:00Z",
   )).map((r) => ({ ...r, resolution: terminalDisplayName(r.resolution) }));
 
+  // Raw and rollup cover disjoint dates, so a plain UNION ALL is enough.
   const dailyTrend = await db.query<{
     date: string;
     visits: number;
     visitors: number;
   }>(
-    useRaw
-      ? `SELECT substr(created_at, 1, 10) AS date,
-                COUNT(*) AS visits, COUNT(DISTINCT visitor_id) AS visitors
-         FROM visitor_views
-         WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
-           ${NOT_EXCLUDED}
-         GROUP BY date ORDER BY date`
-      : `SELECT date, SUM(visits) AS visits, SUM(unique_visitors) AS visitors
-         FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?
-         GROUP BY date ORDER BY date`,
+    `SELECT date, SUM(visits) AS visits, SUM(visitors) AS visitors FROM (
+       SELECT date, SUM(visits) AS visits, SUM(unique_visitors) AS visitors
+       FROM visitor_views_daily WHERE site_id = ? AND date >= ? AND date < ?
+       GROUP BY date
+       UNION ALL
+       SELECT substr(created_at, 1, 10) AS date,
+              COUNT(*) AS visits, COUNT(DISTINCT visitor_id) AS visitors
+       FROM visitor_views
+       WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
+         ${NOT_EXCLUDED}
+       GROUP BY date)
+     GROUP BY date ORDER BY date`,
+    ...rollupParams,
     siteId,
-    useRaw ? cutoffTs : cutoff,
-    ...(useRaw ? [] : [today]),
+    rawSince,
   );
 
   return {
     site_id: siteId,
     period_days: days,
-    visits: (totals?.visits ?? 0) + (todayTotals?.visits ?? 0),
+    visits,
     unique_visitors: uniqueVisitors,
-    avg_interaction_ms: totals?.avg_interaction_ms ?? 0,
+    avg_interaction_ms: avgInteractionMs,
     top_paths: topPaths,
     devices,
     countries,
@@ -377,7 +382,7 @@ export async function getRealtime(db: DbAdapter, siteId: string) {
     `SELECT COUNT(DISTINCT visitor_id) AS active_visitors,
             COUNT(*) AS pageviews
      FROM visitor_views
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}`,
     siteId,
     fiveMinAgo,
@@ -386,7 +391,7 @@ export async function getRealtime(db: DbAdapter, siteId: string) {
   const activePaths = await db.query<{ path: string; views: number }>(
     `SELECT path, COUNT(*) AS views
      FROM visitor_views
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
        ${NOT_EXCLUDED}
      GROUP BY path ORDER BY views DESC LIMIT 10`,
     siteId,
@@ -428,7 +433,7 @@ export async function getCampaignStats(
        ON vv.utm_campaign = uc.utm_campaign
        AND vv.site_id = uc.site_id
        AND vv.created_at >= ?
-       AND vv.bot_score BETWEEN 0 AND 49`;
+       AND ${cleanSql("vv.bot_score")}`;
 
   const campaigns = campaignId
     ? await db.query<CampaignStatRow>(
@@ -461,7 +466,7 @@ export async function getCampaignDetail(
     `SELECT COALESCE(utm_source, 'direct') AS utm_source,
             COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
      FROM visitor_views
-     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY utm_source ORDER BY views DESC LIMIT 20`,
     utmCampaign,
     siteId,
@@ -476,7 +481,7 @@ export async function getCampaignDetail(
     `SELECT COALESCE(utm_medium, 'none') AS utm_medium,
             COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
      FROM visitor_views
-     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY utm_medium ORDER BY views DESC LIMIT 20`,
     utmCampaign,
     siteId,
@@ -491,7 +496,7 @@ export async function getCampaignDetail(
     `SELECT DATE(created_at) AS date,
             COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
      FROM visitor_views
-     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY date ORDER BY date`,
     utmCampaign,
     siteId,
@@ -505,7 +510,7 @@ export async function getCampaignDetail(
   }>(
     `SELECT path, COUNT(*) AS views, COUNT(DISTINCT visitor_id) AS visitors
      FROM visitor_views
-     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY path ORDER BY views DESC LIMIT 20`,
     utmCampaign,
     siteId,
@@ -518,7 +523,7 @@ export async function getCampaignDetail(
   }>(
     `SELECT COALESCE(utm_content, 'none') AS utm_content, COUNT(*) AS views
      FROM visitor_views
-     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY utm_content ORDER BY views DESC LIMIT 20`,
     utmCampaign,
     siteId,
@@ -531,7 +536,7 @@ export async function getCampaignDetail(
   }>(
     `SELECT COALESCE(utm_term, 'none') AS utm_term, COUNT(*) AS views
      FROM visitor_views
-     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE utm_campaign = ? AND site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY utm_term ORDER BY views DESC LIMIT 20`,
     utmCampaign,
     siteId,
@@ -555,9 +560,9 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
     pageviews: number;
   }>(
     `SELECT
-       COUNT(DISTINCT CASE WHEN bot_score BETWEEN 0 AND 49 THEN visitor_id END) AS active_visitors,
-       COUNT(DISTINCT CASE WHEN bot_score >= 50 THEN visitor_id END) AS estimated_bots,
-       COUNT(CASE WHEN bot_score BETWEEN 0 AND 49 THEN 1 END) AS pageviews
+       COUNT(DISTINCT CASE WHEN ${CLEAN_SQL} THEN visitor_id END) AS active_visitors,
+       COUNT(DISTINCT CASE WHEN ${BOT_SQL} THEN visitor_id END) AS estimated_bots,
+       COUNT(CASE WHEN ${CLEAN_SQL} THEN 1 END) AS pageviews
      FROM visitor_views
      WHERE site_id = ? AND created_at >= ?`,
     siteId,
@@ -568,7 +573,7 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
   const hourlyVisitors = await db.query<{ minute: string; count: number }>(
     `SELECT strftime('%H:%M', created_at) AS minute, COUNT(*) AS count
      FROM visitor_views
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY minute ORDER BY minute`,
     siteId,
     oneHourAgo,
@@ -577,7 +582,7 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
   const hourlyEvents = await db.query<{ minute: string; count: number }>(
     `SELECT strftime('%H:%M', created_at) AS minute, COUNT(*) AS count
      FROM semantic_events
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY minute ORDER BY minute`,
     siteId,
     oneHourAgo,
@@ -587,7 +592,7 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
   const dailyVisitors = await db.query<{ hour: string; count: number }>(
     `SELECT strftime('%H:00', created_at) AS hour, COUNT(*) AS count
      FROM visitor_views
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY hour ORDER BY hour`,
     siteId,
     twentyFourHoursAgo,
@@ -596,7 +601,7 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
   const dailyEvents = await db.query<{ hour: string; count: number }>(
     `SELECT strftime('%H:00', created_at) AS hour, COUNT(*) AS count
      FROM semantic_events
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY hour ORDER BY hour`,
     siteId,
     twentyFourHoursAgo,
@@ -610,7 +615,7 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
             MAX(country_code) AS country_code, MAX(created_at) AS created_at,
             COUNT(*) AS view_count
      FROM visitor_views
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      GROUP BY visitor_id
      ORDER BY MAX(created_at) DESC LIMIT 20`,
     siteId,
@@ -621,7 +626,7 @@ export async function getDashboardLive(db: DbAdapter, siteId: string) {
   const recentEvents = await db.query<Record<string, unknown>>(
     `SELECT event_type, site_id, visitor_id, created_at
      FROM semantic_events
-     WHERE site_id = ? AND created_at >= ? AND bot_score BETWEEN 0 AND 49
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
      ORDER BY created_at DESC LIMIT 20`,
     siteId,
     oneHourAgo,
@@ -690,7 +695,7 @@ export async function getCampaignEvents(
        SELECT utm_campaign,
               COUNT(DISTINCT visitor_id) AS visitors
        FROM visitor_views
-       WHERE created_at >= ? AND site_id = ? AND bot_score BETWEEN 0 AND 49
+       WHERE created_at >= ? AND site_id = ? AND ${CLEAN_SQL}
        GROUP BY utm_campaign
      ) vv_agg
      LEFT JOIN (
@@ -698,7 +703,7 @@ export async function getCampaignEvents(
               COUNT(DISTINCT visitor_id) AS event_visitors,
               COUNT(*) AS events
        FROM semantic_events
-       WHERE created_at >= ? AND site_id = ? AND bot_score BETWEEN 0 AND 49
+       WHERE created_at >= ? AND site_id = ? AND ${CLEAN_SQL}
          ${eventFilter}
        GROUP BY utm_campaign
      ) se_agg ON se_agg.utm_campaign IS vv_agg.utm_campaign
@@ -721,7 +726,7 @@ export async function getCampaignEvents(
             COUNT(*) AS count,
             COUNT(DISTINCT visitor_id) AS unique_visitors
      FROM semantic_events
-     WHERE created_at >= ? AND site_id = ? AND bot_score BETWEEN 0 AND 49
+     WHERE created_at >= ? AND site_id = ? AND ${CLEAN_SQL}
      GROUP BY utm_campaign, event_type
      ORDER BY utm_campaign, count DESC
      LIMIT 500`,

@@ -21,6 +21,7 @@
 
 import type { DbAdapter } from "./db/adapter.ts";
 import { recordConfirmedBotIp } from "./bot-score.ts";
+import { CLEAN_SQL, cleanSql } from "./bot-threshold.ts";
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -212,7 +213,7 @@ async function sweep(db: DbAdapter): Promise<void> {
                  END
              WHERE site_id = ?
                AND visitor_id IN (${placeholders})
-               AND bot_score BETWEEN 0 AND 49
+               AND ${CLEAN_SQL}
                AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"correlated"%')`,
             penalty,
             `{"correlated":${detail}}`,
@@ -230,7 +231,7 @@ async function sweep(db: DbAdapter): Promise<void> {
                  END
              WHERE site_id = ?
                AND visitor_id IN (${placeholders})
-               AND bot_score BETWEEN 0 AND 49
+               AND ${CLEAN_SQL}
                AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"correlated"%')`,
             penalty,
             `{"correlated":${detail}}`,
@@ -298,7 +299,7 @@ async function penalizeNoEventBounces(db: DbAdapter): Promise<void> {
            ELSE json_set(bot_score_detail, '$.no_events', json('true'))
          END
      WHERE created_at >= ? AND created_at <= ?
-       AND bot_score BETWEEN 0 AND 49
+       AND ${CLEAN_SQL}
        AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"no_events"%')
        AND NOT EXISTS (
          SELECT 1 FROM semantic_events se
@@ -314,7 +315,7 @@ async function penalizeNoEventBounces(db: DbAdapter): Promise<void> {
            AND se.created_at >= visitor_views.created_at
            AND se.created_at <=
              strftime('%Y-%m-%dT%H:%M:%fZ', visitor_views.created_at, '+5 minutes')
-           AND se.bot_score BETWEEN 0 AND 49
+           AND ${cleanSql("se.bot_score")}
        )`,
     NO_EVENTS_PENALTY,
     windowStart,

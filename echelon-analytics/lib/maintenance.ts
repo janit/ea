@@ -5,6 +5,8 @@
 
 import type { DbAdapter } from "./db/adapter.ts";
 import { BOT_RETENTION_DAYS, RETENTION_DAYS } from "./config.ts";
+import { yieldToEventLoop } from "./buffered-writer.ts";
+import { BOT_SQL, CLEAN_SQL } from "./bot-threshold.ts";
 
 const DAILY_ROLLUP_RETENTION_DAYS = 730; // 2 years for rollup tables
 
@@ -23,7 +25,7 @@ function daysAgoUTC(days: number): string {
 
 /**
  * Aggregate yesterday's visitor_views into visitor_views_daily.
- * Filters: bot_score BETWEEN 0 AND 49, not in excluded_visitors.
+ * Filters: CLEAN_SQL, not in excluded_visitors.
  *
  * Re-runnable: deletes the target date's existing daily rows and re-inserts,
  * atomically in a transaction. This is required (rather than INSERT OR REPLACE
@@ -95,7 +97,7 @@ export async function rollupDay(
       FROM visitor_views
       WHERE (created_at >= (? || 'T00:00:00.000Z'))
         AND (created_at < (date(?, '+1 day') || 'T00:00:00.000Z'))
-        AND (bot_score BETWEEN 0 AND 49)
+        AND (${CLEAN_SQL})
         AND NOT EXISTS (
           SELECT 1 FROM excluded_visitors ev
           WHERE ev.visitor_id = visitor_views.visitor_id
@@ -115,6 +117,32 @@ export async function rollupDay(
     }ms (${changes} rows)`,
   );
   return changes;
+}
+
+const PURGE_BATCH = 5_000;
+
+/**
+ * DELETE matching rows a batch at a time, yielding between batches.
+ * node:sqlite is synchronous: one unbounded DELETE after an outage or a
+ * retention change (245K rows ≈ 4s) blocks every request for its duration.
+ */
+async function deleteInBatches(
+  db: DbAdapter,
+  table: "visitor_views" | "semantic_events",
+  where: string,
+  param: string,
+): Promise<number> {
+  let total = 0;
+  while (true) {
+    const { changes } = await db.run(
+      `DELETE FROM ${table} WHERE rowid IN
+         (SELECT rowid FROM ${table} WHERE ${where} LIMIT ${PURGE_BATCH})`,
+      param,
+    );
+    total += changes;
+    if (changes < PURGE_BATCH) return total;
+    await yieldToEventLoop();
+  }
 }
 
 /**
@@ -139,31 +167,58 @@ export async function purgeExpiredData(
   const rawCutoff = daysAgoUTC(retentionDays);
   const dailyCutoff = daysAgoUTC(DAILY_ROLLUP_RETENTION_DAYS);
 
-  // Clean data (bot_score BETWEEN 0 AND 49)
+  // Finalize each date's aggregate from its raw rows just before they go.
+  // A date is rolled up the night after it ends, but the correlator and
+  // admin exclusions keep correcting raw rows afterwards, and nothing else
+  // re-rolls a completed date — so without this the aggregate that outlives
+  // the raw data would be the uncorrected one. Keyed on the clean rows being
+  // purged: a date whose clean rows are gone but bot rows linger (longer
+  // BOT_RETENTION_DAYS) must not be re-rolled into an empty aggregate.
+  const finalDates = await db.query<{ date: string }>(
+    `SELECT DISTINCT substr(created_at, 1, 10) AS date FROM visitor_views
+     WHERE (created_at < (? || 'T00:00:00.000Z'))
+       AND (created_at >= (? || 'T00:00:00.000Z'))
+       AND (${CLEAN_SQL})`,
+    rawCutoff,
+    dailyCutoff,
+  );
+  for (const { date } of finalDates) {
+    await rollupDay(db, date);
+  }
+
+  // Clean data (CLEAN_SQL)
   // Note: || is string concatenation in SQLite, not logical OR.
   // Parentheses are explicit for clarity and portability.
-  const views = await db.run(
-    `DELETE FROM visitor_views WHERE (created_at < (? || 'T00:00:00.000Z')) AND (bot_score BETWEEN 0 AND 49)`,
+  const views = await deleteInBatches(
+    db,
+    "visitor_views",
+    `(created_at < (? || 'T00:00:00.000Z')) AND (${CLEAN_SQL})`,
     rawCutoff,
   );
 
-  const events = await db.run(
-    `DELETE FROM semantic_events WHERE (created_at < (? || 'T00:00:00.000Z')) AND (bot_score BETWEEN 0 AND 49)`,
+  const events = await deleteInBatches(
+    db,
+    "semantic_events",
+    `(created_at < (? || 'T00:00:00.000Z')) AND (${CLEAN_SQL})`,
     rawCutoff,
   );
 
-  // Bot data (bot_score >= 50 OR bot_score < 0) — separate retention period.
+  // Bot data (BOT_SQL, or bot_score < 0) — separate retention period.
   // bot_score < 0 covers server-ingested events (bot_score=-1) which would
   // otherwise accumulate forever since they match neither the clean nor bot filter.
   const botCutoff = daysAgoUTC(botRetentionDays);
 
-  const botViews = await db.run(
-    `DELETE FROM visitor_views WHERE (created_at < (? || 'T00:00:00.000Z')) AND (bot_score >= 50 OR bot_score < 0)`,
+  const botViews = await deleteInBatches(
+    db,
+    "visitor_views",
+    `(created_at < (? || 'T00:00:00.000Z')) AND (${BOT_SQL} OR bot_score < 0)`,
     botCutoff,
   );
 
-  const botEvents = await db.run(
-    `DELETE FROM semantic_events WHERE (created_at < (? || 'T00:00:00.000Z')) AND (bot_score >= 50 OR bot_score < 0)`,
+  const botEvents = await deleteInBatches(
+    db,
+    "semantic_events",
+    `(created_at < (? || 'T00:00:00.000Z')) AND (${BOT_SQL} OR bot_score < 0)`,
     botCutoff,
   );
 
@@ -178,10 +233,10 @@ export async function purgeExpiredData(
   );
 
   return {
-    views_deleted: views.changes,
-    events_deleted: events.changes,
-    bot_views_deleted: botViews.changes,
-    bot_events_deleted: botEvents.changes,
+    views_deleted: views,
+    events_deleted: events,
+    bot_views_deleted: botViews,
+    bot_events_deleted: botEvents,
     daily_deleted: daily.changes,
     perf_deleted: perf.changes,
   };

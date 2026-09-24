@@ -15,13 +15,13 @@ export const handler = define.handlers({
     );
     const stats = await getCampaignStats(db, 30);
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = { campaigns, stats, liveStats };
-    return page();
+    return page({ campaigns, stats, liveStats });
   },
 });
 
-export default define.page<typeof handler>(function CampaignsPage({ state }) {
-  const { campaigns, stats, liveStats } = state.pageData;
+export default define.page<typeof handler>(function CampaignsPage(props) {
+  const { data, state } = props;
+  const { campaigns, stats, liveStats } = data;
 
   // Build a lookup of stats by campaign id
   const statsById = new Map<string, { views: number; visitors: number }>();

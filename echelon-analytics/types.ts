@@ -24,6 +24,10 @@ export interface ViewRecord {
   utm_campaign?: string | null;
   utm_content?: string | null;
   utm_term?: string | null;
+  /** Request time (ISO-8601 UTC). Stamped on receipt, not on flush: the view
+   *  and event writers flush on different timers, so a DB default would order
+   *  a visitor's events before the pageview that produced them. */
+  created_at: string;
 }
 
 export interface SemanticEvent {
@@ -43,35 +47,7 @@ export interface SemanticEvent {
   is_returning: number;
   bot_score: number;
   bot_score_detail?: string | null;
-}
-
-export interface ExperimentRow {
-  experiment_id: string;
-  name: string;
-  description: string | null;
-  status: "draft" | "active" | "paused" | "completed" | "archived";
-  metric_event_type: string;
-  allocation_percent: number;
-  created_at: string;
-  started_at: string | null;
-  ended_at: string | null;
-}
-
-export interface ExperimentVariantRow {
-  experiment_id: string;
-  variant_id: string;
-  name: string;
-  weight: number;
-  is_control: number;
-  config: string | null;
-}
-
-export interface UtmCampaignRow {
-  id: string;
-  name: string;
-  utm_campaign: string;
-  site_id: string;
-  status: "active" | "paused" | "archived";
+  /** Request time (ISO-8601 UTC) — see ViewRecord.created_at. */
   created_at: string;
 }
 
@@ -122,15 +98,6 @@ export interface PerfMetricRow {
   metadata: string | null;
 }
 
-export interface DailySummary {
-  date: string;
-  total_events: number;
-  unique_sessions: number;
-  top_paths: { path: string; count: number }[];
-  top_event_types: { event_type: string; count: number }[];
-  device_breakdown: { device_class: string; sessions: number }[];
-}
-
 export interface ExperimentStats {
   experiment_id: string;
   name: string;
@@ -152,6 +119,7 @@ export interface VariantStats {
 
 export interface SessionContext {
   session_id: string;
+  site_id?: string;
   viewport_width: number;
   viewport_height: number;
   screen_width: number;

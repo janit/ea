@@ -264,3 +264,63 @@ export function mockFreshCtx(
     next: () => Promise.resolve(new Response("OK", { status: 200 })),
   };
 }
+
+/** Solve the current PoW challenge the way ea.js does, for `site` + `sid`. */
+export async function solvePow(site: string, sid: string): Promise<string> {
+  const { generateChallenge, getWasmBase64 } = await import(
+    "@/lib/challenge.ts"
+  );
+  const challenge = await generateChallenge();
+  const bin = atob(await getWasmBase64());
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  const { instance } = await WebAssembly.instantiate(bytes);
+  const memory = instance.exports.memory as WebAssembly.Memory;
+  const solve = instance.exports.solve as (
+    ptr: number,
+    len: number,
+    out: number,
+  ) => void;
+  const input = new TextEncoder().encode(challenge + ":" + sid + ":" + site);
+  const mem = new Uint8Array(memory.buffer);
+  mem.set(input, 0);
+  solve(0, input.length, 2048);
+  return Array.from(mem.slice(2048, 2064))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Run the real /api auth middleware in a subprocess with `env` set. */
+export async function probeApiAuth(
+  env: Record<string, string>,
+  cases: {
+    method: string;
+    path: string;
+    headers?: Record<string, string>;
+    session?: boolean;
+  }[],
+): Promise<{ status: number; authenticated: boolean }[]> {
+  const probe = new URL("./_api-auth-probe.ts", import.meta.url).pathname;
+  const config = new URL("../deno.json", import.meta.url).pathname;
+  const out = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "-A",
+      "--no-check",
+      "--config",
+      config,
+      probe,
+      JSON.stringify(cases),
+    ],
+    env: {
+      ECHELON_PUBLIC_MODE: "",
+      ECHELON_SECRET: "",
+      ECHELON_USERNAME: "",
+      ...env,
+    },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (!out.success) throw new Error(new TextDecoder().decode(out.stderr));
+  const lines = new TextDecoder().decode(out.stdout).trim().split("\n");
+  return JSON.parse(lines[lines.length - 1]);
+}

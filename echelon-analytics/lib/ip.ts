@@ -7,6 +7,16 @@ import { BEHIND_CLOUDFLARE, TRUST_PROXY } from "./config.ts";
 
 let warnedProxy = false;
 
+const peerAddrs = new WeakMap<Request, string>();
+
+/** Record the connection's peer address for `req` (from Fresh's `ctx.info`). */
+export function setPeerAddr(req: Request, info: Deno.ServeHandlerInfo): void {
+  const addr = info.remoteAddr;
+  if (addr.transport === "tcp" || addr.transport === "udp") {
+    peerAddrs.set(req, addr.hostname);
+  }
+}
+
 /**
  * Extract the real client IP from a request, respecting proxy trust settings.
  * Returns "unknown" when no trusted source is available.
@@ -42,16 +52,12 @@ export function getClientIp(req: Request): string {
     if (realIp) return realIp.trim();
   }
 
-  // Fallback: Deno.serve provides remote address via the request's connection info.
-  // When running standalone (no proxy), this is the actual client IP.
-  // In proxy setups without TRUST_PROXY, this returns the proxy IP — still useful
-  // for per-connection rate limiting rather than collapsing all traffic into "unknown".
-  try {
-    // @ts-ignore: Deno-specific — remoteAddr attached by Deno.serve
-    const addr =
-      (req as unknown as { remoteAddr?: { hostname?: string } }).remoteAddr;
-    if (addr?.hostname) return addr.hostname;
-  } catch { /* not available */ }
+  // Fallback: the TCP peer. A Request carries no connection info — Deno hands
+  // it to the handler separately — so the root middleware records it here.
+  // Standalone this is the real client; behind an untrusted proxy it is the
+  // proxy (the warning above covers that case).
+  const peer = peerAddrs.get(req);
+  if (peer) return peer;
 
   return "unknown";
 }

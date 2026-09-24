@@ -34,20 +34,20 @@ export const handler = define.handlers({
     const stats = await getExperimentStats(db, expId);
     const liveStats = await getLiveStats(db);
 
-    ctx.state.pageData = {
+    return page({
       experiment,
       variants,
       stats: stats[0] ?? null,
       liveStats,
-    };
-    return page();
+    });
   },
 });
 
 export default define.page<typeof handler>(function ExperimentDetailPage({
+  data,
   state,
 }) {
-  const { experiment: exp, variants, stats, liveStats } = state.pageData;
+  const { experiment: exp, variants, stats, liveStats } = data;
   const expId = exp.experiment_id as string;
 
   return (

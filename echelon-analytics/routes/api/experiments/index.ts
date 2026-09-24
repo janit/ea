@@ -62,7 +62,13 @@ export const handler = define.handlers({
 
     // Validate variant weights up front so a bad weight is a clean 400 and the
     // transaction's catch block is left to deal with real DB errors only.
-    const preparedVariants = [];
+    const preparedVariants: {
+      variantId: string;
+      name: string;
+      weight: number;
+      isControl: number;
+      config: string | null;
+    }[] = [];
     for (const v of variantList) {
       // Array.isArray() says nothing about element types — [null] reaches here.
       if (!isPlainObject(v)) {

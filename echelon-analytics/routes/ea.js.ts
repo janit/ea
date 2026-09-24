@@ -30,7 +30,7 @@ export const handler = define.handlers({
       }
     }
 
-    const resp = await handleTracker(ctx.req);
+    const resp = await handleTracker(ctx.req, ctx.state.db);
     const headers = corsHeaders(ctx.req);
     for (const [k, v] of resp.headers) headers.set(k, v);
     return new Response(resp.body, { status: 200, headers });

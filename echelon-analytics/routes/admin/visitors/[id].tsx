@@ -58,7 +58,7 @@ export const handler = define.handlers({
     const lastSeen = views.length > 0 ? (views[0].created_at as string) : null;
 
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = {
+    return page({
       visitorId,
       views,
       events,
@@ -74,8 +74,7 @@ export const handler = define.handlers({
         sites: [...uniqueSites],
       },
       liveStats,
-    };
-    return page();
+    });
   },
 });
 
@@ -84,11 +83,9 @@ function formatDuration(ms: number): string {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
 }
 
-export default define.page<typeof handler>(function VisitorDetailPage({
-  state,
-}) {
-  const { visitorId, views, events, isExcluded, summary, liveStats } =
-    state.pageData;
+export default define.page<typeof handler>(function VisitorDetailPage(props) {
+  const { data, state } = props;
+  const { visitorId, views, events, isExcluded, summary, liveStats } = data;
 
   return (
     <AdminNav

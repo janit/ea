@@ -13,6 +13,18 @@ const CRITICAL_CYCLE_THRESHOLD = 3;
 // Backstop so a steady arrival rate during shutdown cannot loop forever.
 const MAX_DRAIN_ROUNDS = 100;
 
+/**
+ * Chunks an insert callback writes between yields to the event loop.
+ * node:sqlite is synchronous, so a 50K-row flush written in one go blocks
+ * every request for ~1s. Yielding inside the transaction is safe: top-level
+ * statements issued meanwhile queue behind it (see SqliteAdapter).
+ */
+export const CHUNKS_PER_YIELD = 20;
+
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 export class BufferedWriter<T> {
   private buffer: T[] = [];
   private startTimer: ReturnType<typeof setTimeout> | null = null;

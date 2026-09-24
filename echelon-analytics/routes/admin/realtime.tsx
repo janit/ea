@@ -7,13 +7,13 @@ import RealtimePanel from "../../islands/RealtimePanel.tsx";
 export const handler = define.handlers({
   async GET(ctx) {
     const liveStats = await getLiveStats(ctx.state.db);
-    ctx.state.pageData = { liveStats };
-    return page();
+    return page({ liveStats });
   },
 });
 
-export default define.page<typeof handler>(function RealtimePage({ state }) {
-  const { liveStats } = state.pageData;
+export default define.page<typeof handler>(function RealtimePage(props) {
+  const { data, state } = props;
+  const { liveStats } = data;
   return (
     <AdminNav
       title="Realtime Visitors"

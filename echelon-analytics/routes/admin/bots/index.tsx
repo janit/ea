@@ -6,6 +6,7 @@ import type { SQLParam } from "../../../lib/db/adapter.ts";
 import BotActions from "../../../islands/BotActions.tsx";
 import { PUBLIC_MODE } from "../../../lib/config.ts";
 import { formatTime } from "../../../lib/format.ts";
+import { scoreBadge } from "../../../components/ScoreBadge.tsx";
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -51,22 +52,13 @@ export const handler = define.handlers({
     );
 
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = { rows, siteId, minScore, liveStats };
-    return page();
+    return page({ rows, siteId, minScore, liveStats });
   },
 });
 
-function scoreBadge(score: number) {
-  const cls = score >= 50
-    ? "bot-score-high"
-    : score >= 25
-    ? "bot-score-med"
-    : "bot-score-low";
-  return <span class={`bot-score-badge ${cls}`}>{score}</span>;
-}
-
-export default define.page<typeof handler>(function SuspiciousPage({ state }) {
-  const { rows, liveStats } = state.pageData;
+export default define.page<typeof handler>(function SuspiciousPage(props) {
+  const { data, state } = props;
+  const { rows, liveStats } = data;
 
   return (
     <AdminNav

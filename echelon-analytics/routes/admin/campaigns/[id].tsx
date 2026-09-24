@@ -37,15 +37,13 @@ export const handler = define.handlers({
     const summaryArr = await getCampaignStats(db, 30, campaignId);
     const summary = summaryArr[0] ?? { views: 0, visitors: 0 };
 
-    ctx.state.pageData = { campaign, detail, summary, liveStats };
-    return page();
+    return page({ campaign, detail, summary, liveStats });
   },
 });
 
-export default define.page<typeof handler>(function CampaignDetailPage({
-  state,
-}) {
-  const { campaign: c, detail, summary, liveStats } = state.pageData;
+export default define.page<typeof handler>(function CampaignDetailPage(props) {
+  const { data, state } = props;
+  const { campaign: c, detail, summary, liveStats } = data;
   const cId = c.id as string;
 
   return (
@@ -83,7 +81,9 @@ export default define.page<typeof handler>(function CampaignDetailPage({
           </div>
         </div>
         <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-3">
-          <div class="text-xs text-[var(--ea-muted)] mb-1">Visitors (30d)</div>
+          <div class="text-xs text-[var(--ea-muted)] mb-1">
+            Visitors (30d)
+          </div>
           <div class="text-xl tabular-nums text-[var(--ea-primary)]">
             {summary.visitors ?? 0}
           </div>
@@ -167,7 +167,11 @@ export default define.page<typeof handler>(function CampaignDetailPage({
               <tbody>
                 {detail.bySource.map(
                   (
-                    s: { utm_source: string; views: number; visitors: number },
+                    s: {
+                      utm_source: string;
+                      views: number;
+                      visitors: number;
+                    },
                   ) => (
                     <tr
                       key={s.utm_source}
@@ -213,7 +217,11 @@ export default define.page<typeof handler>(function CampaignDetailPage({
               <tbody>
                 {detail.byMedium.map(
                   (
-                    m: { utm_medium: string; views: number; visitors: number },
+                    m: {
+                      utm_medium: string;
+                      views: number;
+                      visitors: number;
+                    },
                   ) => (
                     <tr
                       key={m.utm_medium}

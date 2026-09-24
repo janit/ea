@@ -7,7 +7,8 @@
 import { generateChallenge, getWasmBase64 } from "./challenge.ts";
 import { ALLOWED_ORIGINS, COOKIE_CONSENT, TRUST_PROXY } from "./config.ts";
 import { isDebugEnabled } from "./debug.ts";
-import { getConsentCss } from "./consent-css.ts";
+import { getConsentCss, refreshConsentCss } from "./consent-css.ts";
+import type { DbAdapter } from "./db/adapter.ts";
 import { shouldAnonymize } from "./anonymize.ts";
 
 const TRACKER_SOURCE = `(function(){
@@ -699,7 +700,10 @@ const SCRIPT_HEADERS = {
   "Cache-Control": "public, max-age=300",
 };
 
-export async function handleTracker(req: Request): Promise<Response> {
+export async function handleTracker(
+  req: Request,
+  db: DbAdapter,
+): Promise<Response> {
   const url = new URL(req.url);
   const proto = (TRUST_PROXY && req.headers.get("x-forwarded-proto")) ||
     url.protocol.replace(":", "");
@@ -712,17 +716,16 @@ export async function handleTracker(req: Request): Promise<Response> {
       if (ALLOWED_ORIGINS.size === 0) {
         host = fwdHost;
       } else {
-        try {
-          const fwdHostname = fwdHost.replace(/:\d+$/, "").toLowerCase();
-          host = ALLOWED_ORIGINS.has(fwdHostname) ? fwdHost : host;
-        } catch {
-          // Malformed — fall through to default host
-        }
+        const fwdHostname = fwdHost.replace(/:\d+$/, "").toLowerCase();
+        if (ALLOWED_ORIGINS.has(fwdHostname)) host = fwdHost;
       }
     }
   }
   const origin = `${proto}://${host}`;
   const siteId = url.searchParams.get("s") ?? "default";
+  // Refreshed here, where it is read: refreshing only from /b.gif left ea.js
+  // serving no custom CSS after a boot or an edit until a beacon arrived.
+  if (COOKIE_CONSENT) await refreshConsentCss(db);
   const consentCss = COOKIE_CONSENT ? getConsentCss(siteId) : "";
 
   const [challenge, wasmB64] = await Promise.all([

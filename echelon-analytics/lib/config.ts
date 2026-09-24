@@ -2,7 +2,6 @@
 
 export const DEBUG = Deno.env.get("ECHELON_DEBUG") === "true";
 export const VERSION = Deno.env.get("VERSION") ?? "dev";
-export const PORT = parseInt(Deno.env.get("ECHELON_PORT") ?? "1947");
 export const DB_PATH = Deno.env.get("ECHELON_DB_PATH") ?? "./echelon.db";
 // Empty string = no bearer auth configured. Middleware guards with `if (SECRET)`.
 export const SECRET = Deno.env.get("ECHELON_SECRET") ?? "";
@@ -181,9 +180,11 @@ export const LIVE_STATS_MINUTES = parseInt(
 );
 
 // Graceful shutdown timeout (milliseconds). Increase for large databases.
+// A NaN here would make the force-exit timer fire at once, abandoning the
+// buffered records the shutdown exists to flush.
 export const SHUTDOWN_TIMEOUT_MS = parseInt(
   Deno.env.get("ECHELON_SHUTDOWN_TIMEOUT_MS") ?? "60000",
-);
+) || 60000;
 
 // Display timezone for admin UI timestamps (IANA timezone, e.g. "Europe/Oslo").
 // Data is always stored in UTC. This only affects how times render in the admin panel.

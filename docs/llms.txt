@@ -6,7 +6,7 @@
 
 Echelon Analytics is a lightweight alternative to Google Analytics. It tracks pageviews, bounces, sessions, scroll depth, clicks, outbound links, file downloads, form interactions (focus, edits, submissions), Core Web Vitals, UTM campaigns, and A/B experiments — all without cookies by default.
 
-Visitors are identified using a daily-rotating HMAC hash (IP + UA + site + date). No cross-day tracking, no cookie consent banners needed (GDPR/ePrivacy compliant). Optional persistent cookies via `data-cookie` attribute.
+Visitors are identified using a daily-rotating HMAC hash (IP + UA + site + date). No cross-day tracking, no cookie consent banners needed (GDPR/ePrivacy compliant). Optional persistent cookies via `data-cookie` attribute; the no-consent point applies to cookieless mode only — `data-cookie` needs visitor consent (set `ECHELON_COOKIE_CONSENT=true` to show a consent banner first).
 
 Bot traffic is filtered using a multi-layered system: known UA blocklist, WebAssembly proof-of-work challenges (rotated every 6 hours), heuristic scoring (0–100), Cloudflare integration, burst detection, and per-IP rate limiting.
 

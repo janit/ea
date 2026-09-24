@@ -15,13 +15,12 @@ export const handler = define.handlers({
     const trends = await getTrends(ctx.state.db, { limit: 20 });
     const liveStats = await getLiveStats(ctx.state.db);
 
-    ctx.state.pageData = { metrics, trends, category, liveStats };
-    return page();
+    return page({ metrics, trends, category, liveStats });
   },
 });
 
-export default define.page<typeof handler>(function PerfPage({ state }) {
-  const { metrics, trends, liveStats } = state.pageData;
+export default define.page<typeof handler>(function PerfPage({ data, state }) {
+  const { metrics, trends, liveStats } = data;
   const trendKeys = Object.keys(trends);
 
   return (

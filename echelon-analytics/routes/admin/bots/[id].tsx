@@ -40,21 +40,19 @@ export const handler = define.handlers({
     );
 
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = {
+    return page({
       visitorId,
       views,
       events,
       isExcluded: !!excluded,
       liveStats,
-    };
-    return page();
+    });
   },
 });
 
-export default define.page<typeof handler>(function VisitorDetailPage({
-  state,
-}) {
-  const { visitorId, views, events, isExcluded, liveStats } = state.pageData;
+export default define.page<typeof handler>(function VisitorDetailPage(props) {
+  const { data, state } = props;
+  const { visitorId, views, events, isExcluded, liveStats } = data;
 
   return (
     <AdminNav

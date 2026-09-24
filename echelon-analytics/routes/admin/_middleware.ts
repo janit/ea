@@ -15,7 +15,7 @@ import { getTelemetryState } from "../../lib/telemetry.ts";
 import { getCookie } from "../../lib/cookie.ts";
 
 /** Auth for admin pages — Bearer token or echelon_session cookie. */
-export const handler = define.handlers([
+export const handler = define.middleware([
   (ctx) => {
     // Public mode — skip all auth, dashboard is openly accessible
     if (PUBLIC_MODE) {

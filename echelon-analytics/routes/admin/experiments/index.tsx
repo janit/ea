@@ -15,13 +15,13 @@ export const handler = define.handlers({
     );
     const stats = await getExperimentStats(db);
     const liveStats = await getLiveStats(db);
-    ctx.state.pageData = { experiments, stats, liveStats };
-    return page();
+    return page({ experiments, stats, liveStats });
   },
 });
 
-export default define.page<typeof handler>(function ExperimentsPage({ state }) {
-  const { experiments, stats, liveStats } = state.pageData;
+export default define.page<typeof handler>(function ExperimentsPage(props) {
+  const { data, state } = props;
+  const { experiments, stats, liveStats } = data;
 
   return (
     <AdminNav

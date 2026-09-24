@@ -95,7 +95,7 @@
 
 <h3>Compliance</h3>
 <p>GDPR Article 20 gives users the right to data portability. When your analytics data lives in a single SQLite file with a documented schema, responding to data requests is straightforward: query the database, export the rows, done. No navigating a vendor's admin panel hoping they have an export button. No wondering what they kept after you hit "delete."</p>
-<p>Because Echelon is cookieless by default (daily-rotating HMAC hashes, no cross-day tracking), most deployments don't require cookie consent banners at all — simplifying your compliance posture further.</p>
+<p>Because Echelon is cookieless by default (daily-rotating HMAC hashes, no cross-day tracking), most deployments don't require cookie consent banners at all — simplifying your compliance posture further. Applies to the default cookieless mode only: with <code>data-cookie</code> a persistent cookie is set, which needs visitor consent — set <code>ECHELON_COOKIE_CONSENT=true</code> to show a consent banner first.</p>
 
 <h3>Business Continuity</h3>
 <p>Third-party analytics services shut down, get acquired, change pricing, or deprecate features. When your analytics are self-hosted, none of that matters. Your data survives vendor decisions because it was never on their servers. The AGPL-3.0 license guarantees you can always run, modify, and distribute the software.</p>

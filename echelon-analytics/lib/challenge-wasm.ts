@@ -361,7 +361,9 @@ function section(id: number, content: number[]): number[] {
 }
 
 /** Build a complete WASM module from challenge parameters. */
-export function buildChallengeWasm(params: ChallengeParams): Uint8Array {
+export function buildChallengeWasm(
+  params: ChallengeParams,
+): Uint8Array<ArrayBuffer> {
   const out: number[] = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
   out.push(...section(1, [1, 0x60, 3, 0x7f, 0x7f, 0x7f, 0]));

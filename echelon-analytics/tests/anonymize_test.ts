@@ -8,6 +8,7 @@ import type { SemanticEvent, ViewRecord } from "@/types.ts";
 
 function baseView(overrides: Partial<ViewRecord> = {}): ViewRecord {
   return {
+    created_at: "2026-01-01T00:00:00.000Z",
     visitor_id: "abc123def456abc0",
     path: "/test",
     site_id: "test-site",
@@ -36,6 +37,7 @@ function baseView(overrides: Partial<ViewRecord> = {}): ViewRecord {
 
 function baseEvent(overrides: Partial<SemanticEvent> = {}): SemanticEvent {
   return {
+    created_at: "2026-01-01T00:00:00.000Z",
     event_type: "click",
     site_id: "test-site",
     session_id: "550e8400-e29b-41d4-a716-446655440000",

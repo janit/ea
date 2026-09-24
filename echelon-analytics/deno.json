@@ -1,7 +1,7 @@
 {
   "nodeModulesDir": "manual",
   "tasks": {
-    "check": "deno fmt --check . && deno lint . && deno check main.ts mcp-server.ts && deno task test",
+    "check": "deno fmt --check . && deno lint . && deno check main.ts mcp-server.ts client.ts utils.ts types.ts routes/ lib/ islands/ components/ && deno task test",
     "test": "deno test -A --no-check --ignore=tests/e2e tests/",
     "test:e2e": "deno test -A --no-check tests/e2e/",
     "dev": "vite",

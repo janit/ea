@@ -12,13 +12,12 @@ export const handler = define.handlers({
     const days = ctx.state.days;
     const data = await getOverview(ctx.state.db, siteId, days);
     const liveStats = await getLiveStats(ctx.state.db);
-    ctx.state.pageData = { data, days, liveStats };
-    return page();
+    return page({ data, days, liveStats });
   },
 });
 
-export default define.page<typeof handler>(function Dashboard({ state }) {
-  const { data: stats, liveStats } = state.pageData;
+export default define.page<typeof handler>(function Dashboard({ data, state }) {
+  const { data: stats, liveStats } = data;
 
   return (
     <AdminNav

@@ -7,6 +7,7 @@ import { getViewBufferSize } from "./beacon.ts";
 import { getEventBufferSize } from "./events-endpoint.ts";
 import { getRequestStats } from "./request-stats.ts";
 import { LIVE_STATS_MINUTES, PUBLIC_MODE } from "./config.ts";
+import { BOT_SQL, CLEAN_SQL } from "./bot-threshold.ts";
 
 export interface LiveStats {
   viewBuffer: number;
@@ -27,8 +28,8 @@ export async function getLiveStats(db: DbAdapter): Promise<LiveStats> {
     unique_visitors: number;
   }>(
     `SELECT
-       SUM(CASE WHEN bot_score BETWEEN 0 AND 49 THEN 1 ELSE 0 END) AS human_views,
-       SUM(CASE WHEN bot_score >= 50 THEN 1 ELSE 0 END) AS bot_views,
+       SUM(CASE WHEN ${CLEAN_SQL} THEN 1 ELSE 0 END) AS human_views,
+       SUM(CASE WHEN ${BOT_SQL} THEN 1 ELSE 0 END) AS bot_views,
        COUNT(DISTINCT visitor_id) AS unique_visitors
      FROM visitor_views
      WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-' || ? || ' minutes'))`,

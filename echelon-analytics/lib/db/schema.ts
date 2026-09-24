@@ -12,6 +12,7 @@
 // migrate-added column threw "no such column" on exactly the legacy databases
 // migrate() exists to upgrade, aborting before it could run. DatabaseSync.exec
 // is not atomic either, so the statements before the failure stayed committed.
+import { CLEAN_SQL } from "../bot-threshold.ts";
 export const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS visitor_views (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +50,7 @@ export const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vv_created_bot  ON visitor_views(created_at, bot_score);
   CREATE INDEX IF NOT EXISTS idx_vv_site_created_clean
     ON visitor_views(site_id, created_at)
-    WHERE bot_score BETWEEN 0 AND 49;
+    WHERE ${CLEAN_SQL};
 
   CREATE INDEX IF NOT EXISTS idx_vv_bot_score
     ON visitor_views(bot_score, visitor_id)

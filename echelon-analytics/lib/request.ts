@@ -71,3 +71,13 @@ export function decodeParam(raw: string): string | null {
   // Reject stray escapes rather than guessing at intent.
   return /%(?![0-9a-fA-F]{2})/.test(raw) ? null : raw;
 }
+
+/**
+ * Escape a user search term for `LIKE ? ESCAPE '\'` so it matches literally.
+ * The escape character itself must be escaped first: escaping only % and _
+ * turned a typed `\%` into `\\%` — a literal backslash followed by a live
+ * wildcard.
+ */
+export function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, "\\$&");
+}

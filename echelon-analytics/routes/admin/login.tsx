@@ -15,12 +15,11 @@ import { getClientIp } from "../../lib/ip.ts";
 
 export const handler = define.handlers({
   GET(_ctx) {
-    _ctx.state.pageData = {
+    return page({
       error: false,
       rateLimited: false,
       version: VERSION,
-    };
-    return page();
+    });
   },
 
   async POST(ctx) {
@@ -47,12 +46,11 @@ export const handler = define.handlers({
 
     // Check rate limit before processing
     if (isAuthLimited(limitKey)) {
-      ctx.state.pageData = {
+      return page({
         error: false,
         rateLimited: true,
         version: VERSION,
-      };
-      return page();
+      });
     }
 
     const usernameOk = constantTimeEquals(username, AUTH_USERNAME);
@@ -72,17 +70,11 @@ export const handler = define.handlers({
     // Record failed attempt for rate limiting
     recordAuthFailure(limitKey);
 
-    ctx.state.pageData = { error: true, rateLimited: false, version: VERSION };
-    return page();
+    return page({ error: true, rateLimited: false, version: VERSION });
   },
 });
 
-export default define.page<typeof handler>(function LoginPage({ state }) {
-  const data = state.pageData as {
-    error: boolean;
-    rateLimited: boolean;
-    version: string;
-  };
+export default define.page<typeof handler>(function LoginPage({ data }) {
   return (
     <html lang="en">
       <head>

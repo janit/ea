@@ -14,7 +14,6 @@ import {
   insertEvent,
   insertView,
   TODAY,
-  WEEK_AGO,
   YESTERDAY,
 } from "./_helpers.ts";
 
@@ -28,6 +27,16 @@ import {
 // 365 days.
 const BEYOND_RETENTION = 365;
 
+// Dates whose raw rows would already be purged — the only dates the rollup
+// path reads from visitor_views_daily.
+function purgedDate(daysAgo: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  return d.toISOString().slice(0, 10);
+}
+const OLD = purgedDate(200);
+const OLDER = purgedDate(201);
+
 Deno.test("getOverview — empty DB returns zeros", async () => {
   const db = createTestDb();
   const result = await getOverview(db, "test-site", 30);
@@ -40,48 +49,54 @@ Deno.test("getOverview — empty DB returns zeros", async () => {
   await db.close();
 });
 
-Deno.test("getOverview — counts daily rollup + today's raw", async () => {
+Deno.test("getOverview — rollup for purged dates + raw for retained dates", async () => {
   const db = createTestDb();
-  // Add daily rollup for yesterday
   await insertDailyRollup(db, {
     site_id: "test-site",
-    date: YESTERDAY,
+    date: OLD,
     visits: 50,
     unique_visitors: 40,
   });
-  // Add today's raw views
+  // Raw views today and yesterday — yesterday has no rollup yet.
   await insertView(db, { site_id: "test-site", visitor_id: "today-1" });
-  await insertView(db, { site_id: "test-site", visitor_id: "today-2" });
+  await insertView(db, {
+    site_id: "test-site",
+    visitor_id: "yday-1",
+    created_at: `${YESTERDAY}T12:00:00.000Z`,
+  });
 
   const result = await getOverview(db, "test-site", BEYOND_RETENTION);
-  assertEquals(result.visits, 52); // 50 from rollup + 2 from today
+  assertEquals(result.visits, 52);
+  assertEquals(result.daily_trend.map((d) => d.date), [OLD, YESTERDAY, TODAY]);
   await db.close();
 });
 
 Deno.test("getOverview — filters by site_id", async () => {
   const db = createTestDb();
-  await insertDailyRollup(db, { site_id: "site-a", visits: 100 });
-  await insertDailyRollup(db, { site_id: "site-b", visits: 200 });
+  await insertDailyRollup(db, { site_id: "site-a", date: OLD, visits: 100 });
+  await insertDailyRollup(db, { site_id: "site-b", date: OLD, visits: 200 });
 
   const result = await getOverview(db, "site-a", BEYOND_RETENTION);
-  assertEquals(result.visits >= 100, true);
+  assertEquals(result.visits, 100);
   assertEquals(result.site_id, "site-a");
   await db.close();
 });
 
-Deno.test("getOverview — devices breakdown from daily rollup", async () => {
+Deno.test("getOverview — devices breakdown merges rollup and raw", async () => {
   const db = createTestDb();
   await insertDailyRollup(db, {
+    date: OLD,
     device_type: "desktop",
     visits: 60,
   });
-  await insertDailyRollup(db, {
-    device_type: "mobile",
-    visits: 40,
-  });
+  await insertDailyRollup(db, { date: OLD, device_type: "mobile", visits: 40 });
+  await insertView(db, { visitor_id: "raw-1", device_type: "mobile" });
 
   const result = await getOverview(db, "test-site", BEYOND_RETENTION);
-  assertEquals(result.devices.length, 2);
+  assertEquals(result.devices, [
+    { device_type: "desktop", visits: 60 },
+    { device_type: "mobile", visits: 41 },
+  ]);
   await db.close();
 });
 
@@ -96,29 +111,52 @@ Deno.test("getOverview — excludes bot views from today's count", async () => {
   await db.close();
 });
 
-Deno.test("getOverview — breakdowns exclude a stray today rollup row (headline/breakdown consistency)", async () => {
-  // Regression: headline counts today from raw, so breakdowns must NOT also
-  // count today from the rollup table (a today row can exist via retry/manual
-  // rollup). Otherwise the two disagree.
+Deno.test("getOverview — rollup rows for dates still in raw retention are ignored", async () => {
+  // Raw rows are authoritative while they exist: a rollup computed before a
+  // later correlator/exclusion correction (or a stray today row from a
+  // manual re-roll) must not be served alongside or instead of them.
   const db = createTestDb();
-  await insertDailyRollup(db, {
-    date: YESTERDAY,
-    visits: 5,
-    unique_visitors: 5,
-  });
-  // A stray rollup row for today (e.g. from the maintenance retry path).
-  await insertDailyRollup(db, {
-    date: TODAY,
-    visits: 999,
-    unique_visitors: 999,
-  });
-  await insertView(db, { visitor_id: "today-1" }); // 1 raw view today
+  await insertDailyRollup(db, { date: OLD, visits: 5, unique_visitors: 5 });
+  await insertDailyRollup(db, { date: YESTERDAY, visits: 999 });
+  await insertDailyRollup(db, { date: TODAY, visits: 999 });
+  await insertView(db, { visitor_id: "today-1" });
 
   const result = await getOverview(db, "test-site", BEYOND_RETENTION);
-  // Headline: 5 (yesterday rollup) + 1 (raw today) = 6. The stray 999 must not leak in.
   assertEquals(result.visits, 6);
-  // daily_trend must not contain a today bar sourced from the stray rollup row.
-  assertEquals(result.daily_trend.some((d) => d.date === TODAY), false);
+  assertEquals(result.devices.reduce((n, d) => n + d.visits, 0), 6);
+  assertEquals(result.daily_trend.map((d) => [d.date, d.visits]), [
+    [OLD, 5],
+    [TODAY, 1],
+  ]);
+  await db.close();
+});
+
+Deno.test("getOverview — beyond retention, excluded visitors are not counted in raw days", async () => {
+  const db = createTestDb();
+  await insertView(db, { visitor_id: "excluded-1" });
+  await insertView(db, { visitor_id: "kept-1" });
+  await db.run(
+    `INSERT INTO excluded_visitors (visitor_id) VALUES ('excluded-1')`,
+  );
+
+  const result = await getOverview(db, "test-site", BEYOND_RETENTION);
+  assertEquals(result.visits, 1);
+  assertEquals(result.unique_visitors, 1);
+  await db.close();
+});
+
+Deno.test("getOverview — beyond retention agrees with the raw window for retained days", async () => {
+  const db = createTestDb();
+  for (let i = 0; i < 5; i++) {
+    await insertView(db, {
+      visitor_id: `yday-${i}`,
+      created_at: `${YESTERDAY}T12:00:0${i}.000Z`,
+    });
+  }
+  const long = await getOverview(db, "test-site", BEYOND_RETENTION);
+  const short = await getOverview(db, "test-site", 30);
+  assertEquals(long.visits, short.visits);
+  assertEquals(long.visits, 5);
   await db.close();
 });
 
@@ -126,13 +164,13 @@ Deno.test("getOverview — avg_interaction_ms is visit-weighted, not mean-of-mea
   const db = createTestDb();
   // 1 visit @ 1000ms and 99 visits @ 100ms → weighted mean = 109, not 550.
   await insertDailyRollup(db, {
-    date: YESTERDAY,
+    date: OLD,
     device_type: "desktop",
     visits: 1,
     avg_interaction_ms: 1000,
   });
   await insertDailyRollup(db, {
-    date: WEEK_AGO,
+    date: OLDER,
     device_type: "mobile",
     visits: 99,
     avg_interaction_ms: 100,

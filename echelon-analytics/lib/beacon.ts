@@ -35,9 +35,12 @@ import {
   matchesAiCrawlerFeed,
   matchesCrawlerFeed,
 } from "./threat-feeds.ts";
-import { BufferedWriter } from "./buffered-writer.ts";
+import {
+  BufferedWriter,
+  CHUNKS_PER_YIELD,
+  yieldToEventLoop,
+} from "./buffered-writer.ts";
 import { isUtmCampaignActive, refreshUtmCampaigns } from "./utm.ts";
-import { refreshConsentCss } from "./consent-css.ts";
 import { debug } from "./debug.ts";
 
 // 1x1 transparent GIF (43 bytes)
@@ -106,8 +109,8 @@ const VIEW_COLS = `(visitor_id, path, site_id, session_id, interaction_ms,
    screen_width, screen_height, device_type, os_name, browser_name, browser_version,
    country_code,
    is_returning, referrer, referrer_type, bot_score, bot_score_detail, is_pwa,
-   utm_source, utm_medium, utm_campaign, utm_content, utm_term)`;
-const VIEW_COL_COUNT = 23;
+   utm_source, utm_medium, utm_campaign, utm_content, utm_term, created_at)`;
+const VIEW_COL_COUNT = 24;
 const CHUNK_SIZE = 50;
 const ONE_ROW = `(${Array(VIEW_COL_COUNT).fill("?").join(",")})`;
 
@@ -136,6 +139,7 @@ function viewParams(v: ViewRecord): SQLParam[] {
     v.utm_campaign ?? null,
     v.utm_content ?? null,
     v.utm_term ?? null,
+    v.created_at,
   ];
 }
 
@@ -149,6 +153,9 @@ const viewWriter = new BufferedWriter<ViewRecord>(
         const params: SQLParam[] = [];
         for (const v of chunk) params.push(...viewParams(v));
         await tx.run(sql, ...params);
+        if ((i / CHUNK_SIZE + 1) % CHUNKS_PER_YIELD === 0) {
+          await yieldToEventLoop();
+        }
       }
     });
   },
@@ -292,10 +299,9 @@ export async function handleBeacon(
     isReturning = false;
   }
 
-  // Refresh exclusion cache + UTM campaign cache + consent CSS cache
+  // Refresh exclusion cache + UTM campaign cache
   await refreshExcluded(db);
   await refreshUtmCampaigns(db);
-  await refreshConsentCss(db);
 
   // Drop excluded visitors at ingest, as the events endpoint already does.
   // This path refreshed the cache but never consulted it, so an excluded
@@ -331,11 +337,8 @@ export async function handleBeacon(
     utmCampaign = null;
   }
 
-  // Record if valid and not excluded
-  if (
-    validInteraction && path && path.startsWith("/") &&
-    !excludedSet.has(visitorId)
-  ) {
+  // Record if valid (excluded visitors already returned above)
+  if (validInteraction && path && path.startsWith("/")) {
     const ip = getClientIp(req);
     const ipHash = await hashIp(ip);
     const burstCount = recordBurst(ipHash);
@@ -458,6 +461,7 @@ export async function handleBeacon(
         utm_campaign: utmCampaign,
         utm_content: utmContent,
         utm_term: utmTerm,
+        created_at: new Date().toISOString(),
       };
       if (shouldAnonymize(siteId)) {
         view = await anonymizeView(view);

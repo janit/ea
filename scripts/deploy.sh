@@ -349,8 +349,11 @@ OLD=$(docker ps -q -f "name=${STOP_FILTER}" | head -1)
 OLD_NAME=""
 if [[ -n "$OLD" ]]; then
   OLD_NAME=$(docker inspect --format '{{.Name}}' "$OLD" | sed 's|^/||')
-  info "Stopping $OLD_NAME (30s grace period for buffer flush)"
-  docker stop --time=30 "$OLD" >/dev/null
+  # Longer than the app's own force-exit (ECHELON_SHUTDOWN_TIMEOUT_MS, 60s
+  # default): a shorter grace SIGKILLs a slow final flush before the app's
+  # timeout can log it, silently losing the buffered records.
+  info "Stopping $OLD_NAME (70s grace period for buffer flush)"
+  docker stop --time=70 "$OLD" >/dev/null
   docker rm "$OLD" >/dev/null
 fi
 
@@ -370,6 +373,7 @@ docker run -d \
   "${NETWORK_ARGS[@]+"${NETWORK_ARGS[@]}"}" \
   "${ENV_ARGS[@]+"${ENV_ARGS[@]}"}" \
   --restart unless-stopped \
+  --stop-timeout 70 \
   --log-driver json-file \
   --log-opt max-size=50m \
   --log-opt max-file=5 \

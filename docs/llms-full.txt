@@ -478,7 +478,7 @@ Without data-cookie, visitors are identified by a daily-rotating HMAC-SHA256 has
 - Cannot be reversed to recover the original IP
 - Requires no cookie consent (GDPR/ePrivacy compliant)
 
-Add data-cookie to enable a persistent visitor cookie for returning visitor tracking.
+Add data-cookie to enable a persistent visitor cookie for returning visitor tracking. The no-consent point applies to cookieless mode only: the cookie needs visitor consent, so set ECHELON_COOKIE_CONSENT=true to show a consent banner first; without it, data-cookie sets the cookie immediately.
 
 ## Admin Dashboard
 
@@ -685,6 +685,7 @@ Set ECHELON_BOT_DISCARD_THRESHOLD to a score (e.g., 80) to discard high-score re
 | ECHELON_DB_PATH | ./echelon.db | Path to SQLite database file |
 | ECHELON_SECRET | (empty) | Bearer token for API auth. If unset, PoW tokens won't survive restarts |
 | ECHELON_RETENTION_DAYS | 90 | Days to keep raw visitor_views and semantic_events |
+| ECHELON_BOT_RETENTION_DAYS | (same as retention) | Days to keep raw rows scored as bots or server-ingested |
 
 ## Authentication
 
@@ -746,6 +747,8 @@ deno eval "import{hashPassword}from'./lib/auth.ts';console.log(await hashPasswor
 |----------|---------|-------------|
 | ECHELON_COOKIE_CONSENT | false | Show consent banner before setting visitor cookie |
 | ECHELON_IGNORED_SITES | (empty) | Comma-separated site IDs to silently ignore. "smoke-test" always ignored |
+| ECHELON_ALLOWED_SITES | (empty) | Comma-separated site IDs to accept. Others are dropped. Empty = all |
+| ECHELON_DEBUG | false | Verbose debug logging |
 | ECHELON_PUBLIC_MODE | false | Read-only public dashboard (no auth, mutations blocked) |
 | ECHELON_ANONYMIZE_SITES | (empty) | Comma-separated site IDs to anonymize in API responses |
 | ECHELON_TELEMETRY | (per-instance) | Override telemetry opt-in: "true" or "false" |
