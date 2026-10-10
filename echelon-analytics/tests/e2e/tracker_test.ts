@@ -76,3 +76,38 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "e2e/tracker — token is re-solved from /c on demand",
+  ignore: skipIfNoE2E(),
+  async fn() {
+    const { page, baseUrl, cleanup } = await setupE2E();
+    try {
+      // /robots.txt carries no CSP; /admin/login blocks WebAssembly (no wasm-unsafe-eval).
+      await page.goto(`${baseUrl}/robots.txt`, { waitUntil: "networkidle2" });
+      const result = await page.evaluate(async (base: string) => {
+        await new Promise<void>((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = base + "/ea.js?s=e2e-refresh";
+          s.setAttribute("data-site", "e2e-refresh");
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error("ea.js failed to load"));
+          document.head.appendChild(s);
+        });
+        await new Promise((r) => setTimeout(r, 1500));
+        const before = sessionStorage.getItem("_etok") ?? "";
+        // deno-lint-ignore no-explicit-any
+        const tok = await (window as any).echelon._refreshToken();
+        const after = sessionStorage.getItem("_etok") ?? "";
+        return { before, after, tok };
+      }, { args: [baseUrl] });
+
+      assertEquals(result.before.split(":").length, 3);
+      assertEquals(result.after.split(":").length, 3);
+      assertEquals(/^[0-9a-f]{32}$/.test(result.tok), true);
+      assertEquals(result.after.split(":")[1], result.tok);
+    } finally {
+      await cleanup();
+    }
+  },
+});

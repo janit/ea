@@ -84,6 +84,9 @@
 <div class="endpoint"><span class="method">POST</span> <span class="path">/e</span></div>
 <p>Behavioral events endpoint (via <code>sendBeacon</code>). Accepts JSON with event array, site ID, and PoW token. Returns <code>204 No Content</code>. Max 16 KB body, max 20 events per request. No auth required.</p>
 
+<div class="endpoint"><span class="method">GET</span> <span class="path">/c</span></div>
+<p>Current PoW challenge, used by the tracker to refresh its token. Public, rate-limited, CORS-enabled. No auth required.</p>
+
 <div class="endpoint"><span class="method">GET</span> <span class="path">/api/health</span></div>
 <p>Health check. No auth required.</p>
 <pre>{ "status": "ok", "service": "Echelon Analytics" }</pre>
@@ -95,7 +98,7 @@
 <h2>Stats</h2>
 
 <div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/overview?site_id=X&amp;days=N</span></div>
-<p>Overview statistics for a site. Visitors, pageviews, top pages, devices, countries, referrers, daily trends. <code>days</code> defaults to 30 (max 730).</p>
+<p>Overview statistics for a site. Visitors, pageviews, top pages, devices, countries, referrers, daily trends. <code>days</code> defaults to 30 (max 730). The response includes <code>unique_visitors</code> and <code>validated_visitors</code>: the number of distinct visitors with at least one validated view, meaning proof of interaction rather than a low bot score. It is computed from raw rows only, so for a period longer than raw retention it covers the retained part.</p>
 
 <div class="endpoint"><span class="method">GET</span> <span class="path">/api/stats/dashboard?site_id=X</span></div>
 <p>Live dashboard data: active visitors (now), 60-minute trend (per-minute), 24-hour trend (per-hour), recent visitors and recent events. Powers the live dashboard island.</p>
@@ -210,7 +213,7 @@
 <pre>{ "included": "abc123" }</pre>
 
 <div class="endpoint"><span class="method">GET</span> <span class="path">/api/bots/visitor/:id</span></div>
-<p>Detailed visitor data: exclusion status, last 100 views, and last 100 events.</p>
+<p>Detailed visitor data: exclusion status, last 100 views, and last 100 events. Each view includes <code>session_id</code> and <code>validated</code> (<code>1</code> once the view has proof of interaction).</p>
 
 <hr>
 
@@ -236,10 +239,10 @@
 <h2>Sites</h2>
 
 <div class="endpoint"><span class="method">GET</span> <span class="path">/api/sites/:id</span></div>
-<p>Get site settings (consent CSS).</p>
+<p>Get site settings: <code>consent_css</code>, <code>home_country</code> and <code>home_language</code> (each <code>null</code> when unset).</p>
 
 <div class="endpoint"><span class="method">PATCH</span> <span class="path">/api/sites/:id</span></div>
-<p>Update site consent CSS (max 4096 chars).</p>
+<p>Update site settings. Only fields present in the JSON body change; fields not sent keep their value. <code>consent_css</code> (max 4096 chars), <code>home_country</code> (an assigned two-letter ISO 3166-1 code, e.g. <code>FI</code>; a code Echelon cannot place on a continent, such as <code>UK</code> or <code>XX</code>, is refused, and <code>RU</code> is accepted) and <code>home_language</code> (language code such as <code>fi</code> or <code>en</code>; a region like <code>en-GB</code> is reduced to <code>en</code>). Send <code>null</code> or an empty string to clear a field. Invalid values return <code>400</code> (<code>invalid_home_country</code>, <code>invalid_home_language</code>). The site id is matched without regard to case. The home country and language switch on the geography bot signals for that site; see <a href="bot-defense.html">Bot Defense</a> for what that costs real visitors.</p>
 
 <hr>
 

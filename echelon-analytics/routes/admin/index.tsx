@@ -32,7 +32,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
       {/* Live: Now + 60 min + 24h + Recent visitors/events */}
       <DashboardLive siteId={state.siteId} />
 
-      <div class="grid grid-cols-4 gap-3 mb-4">
+      <div class="grid grid-cols-5 gap-3 mb-4">
         <div class="kpi-card">
           <div class="kpi-value">{stats.visits.toLocaleString()}</div>
           <div class="kpi-label">Total Visits</div>
@@ -42,6 +42,12 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
             {stats.unique_visitors.toLocaleString()}
           </div>
           <div class="kpi-label">Unique Visitors</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">
+            {stats.validated_visitors.toLocaleString()}
+          </div>
+          <div class="kpi-label">Validated Visitors</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value">

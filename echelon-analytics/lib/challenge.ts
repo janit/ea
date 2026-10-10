@@ -1,14 +1,15 @@
 // Echelon Analytics — Challenge Generation + Verification
 //
-// Runtime-generated WASM PoW challenges that rotate every 6 hours.
-// Each deployment/rotation produces a unique WASM blob, making
-// cross-deployment bot toolkits impractical.
+// Runtime-generated WASM PoW challenges that rotate every 6 hours on a
+// calendar boundary. With ECHELON_SECRET set, a window's module is derived
+// from the secret, so restarts do not invalidate tokens in flight.
 
 import {
   CHALLENGE_WINDOW_MINUTES,
   constantTimeEquals,
   SECRET,
 } from "./config.ts";
+import { BOT_THRESHOLD } from "./bot-threshold.ts";
 import { buildChallengeWasm, generateParams } from "./challenge-wasm.ts";
 import { debug } from "./debug.ts";
 
@@ -69,6 +70,7 @@ interface WasmSlot {
   wasm: Uint8Array;
   wasmB64: string;
   instance: WebAssembly.Instance;
+  bucket: number;
   createdAt: number;
 }
 
@@ -76,30 +78,73 @@ let currentSlot: WasmSlot | null = null;
 let previousSlot: WasmSlot | null = null;
 let rotationPromise: Promise<WasmSlot> | null = null;
 
-async function createSlot(): Promise<WasmSlot> {
-  const seed = crypto.getRandomValues(new Uint8Array(64));
-  const params = generateParams(seed);
+/** The rotation window a timestamp falls in. */
+export function rotationBucket(now: number = Date.now()): number {
+  return Math.floor(now / ROTATION_MS);
+}
+
+/**
+ * 64-byte seed for a rotation bucket's WASM parameters.
+ *
+ * With a secret, the seed is a function of (secret, bucket): a restart inside
+ * a window rebuilds the SAME module, so the blob embedded in every cached
+ * /ea.js and every open tab keeps verifying. Rotating on process-relative age
+ * with a random seed invalidated all of them on each deploy.
+ *
+ * Without a secret there is nothing stable to derive from; the seed is random
+ * per process, as it always was (challenge.ts warns about this at startup).
+ */
+export async function slotSeed(
+  secret: string,
+  bucket: number,
+): Promise<Uint8Array> {
+  if (!secret) return crypto.getRandomValues(new Uint8Array(64));
+  const half = async (label: string) =>
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        encoder.encode(`${label}:${secret}:${bucket}`),
+      ),
+    );
+  const seed = new Uint8Array(64);
+  seed.set(await half("echelon-wasm-a"), 0);
+  seed.set(await half("echelon-wasm-b"), 32);
+  return seed;
+}
+
+async function createSlot(bucket: number): Promise<WasmSlot> {
+  const params = generateParams(await slotSeed(SECRET, bucket));
   const wasm = buildChallengeWasm(params);
   const module = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
   const instance = await WebAssembly.instantiate(module);
   // Base64 encode the WASM for embedding in the tracker JS
   const wasmB64 = btoa(String.fromCharCode(...wasm));
-  debug("pow", "createSlot", { wasmSize: wasm.length, createdAt: Date.now() });
-  return { wasm, wasmB64, instance, createdAt: Date.now() };
+  debug("pow", "createSlot", { wasmSize: wasm.length, bucket });
+  return { wasm, wasmB64, instance, bucket, createdAt: Date.now() };
 }
 
 function ensureCurrentSlot(): Promise<WasmSlot> {
   // Guard against concurrent rotation: if a rotation is in progress, await it
   if (rotationPromise) return rotationPromise;
 
-  const now = Date.now();
-  if (!currentSlot || now - currentSlot.createdAt >= ROTATION_MS) {
+  const bucket = rotationBucket();
+  if (!currentSlot || currentSlot.bucket !== bucket) {
     rotationPromise = (async () => {
-      if (currentSlot) previousSlot = currentSlot;
-      currentSlot = await createSlot();
+      if (currentSlot) {
+        previousSlot = currentSlot;
+      } else if (SECRET) {
+        // Cold start: rebuild the previous window's module too, so a tab
+        // that loaded /ea.js just before a rotation still verifies after a
+        // restart. Only possible when the seed is derivable.
+        previousSlot = await createSlot(bucket - 1);
+      }
+      currentSlot = await createSlot(bucket);
       rotationPromise = null;
       return currentSlot;
-    })();
+    })().catch((e) => {
+      rotationPromise = null;
+      throw e;
+    });
     return rotationPromise;
   }
   return Promise.resolve(currentSlot);
@@ -260,12 +305,36 @@ export async function verifyToken(
   return "invalid";
 }
 
-/** Bot score penalty for token verification result. */
+/** Which endpoint is being scored. The invalid-token penalty differs. */
+export type PowSurface = "beacon" | "events";
+
+/** Invalid-token penalty on the events surface. See tokenPenalty. */
+const EVENTS_INVALID_PENALTY = 40;
+/** Missing-token penalty on both surfaces. See tokenPenalty. */
+const MISSING_PENALTY = 30;
+
+/**
+ * Bot score penalty for a token verification result.
+ *
+ * "missing" is 30 on both surfaces. A browser that cannot run WebAssembly
+ * (iOS Lockdown Mode, hardened browsers) or whose solve loses the tracker's
+ * 150 ms wait looks exactly like a bot here, so it must not be decisive. The
+ * engagement gate raises a view that never proved work AND never interacted
+ * to the threshold afterwards — the forgiveness is conditional on behaviour.
+ *
+ * "invalid" depends on the surface:
+ * - beacon → BOT_THRESHOLD. No honest first pageview sends a bad token, and
+ *   the proven-identity waiver (proven-sessions.ts) covers the stale-token
+ *   case for anyone who has already proved work.
+ * - events → 40, under the threshold. Events fire for the whole life of a tab
+ *   and are the evidence the view validator runs on; discarding them for a
+ *   stale token would erase proof that a real session interacted.
+ */
 export function tokenPenalty(
   result: "valid" | "missing" | "invalid",
+  surface: PowSurface,
 ): number {
   if (result === "valid") return 0;
-  // Missing or invalid PoW = definitive bot signal. Any legitimate
-  // browser that loaded ea.js will have solved the challenge.
-  return 50;
+  if (result === "missing") return MISSING_PENALTY;
+  return surface === "beacon" ? BOT_THRESHOLD : EVENTS_INVALID_PENALTY;
 }

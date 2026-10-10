@@ -100,7 +100,7 @@
 
 <h2>Bot Defense That Works</h2>
 <p>Google Analytics has "bot filtering" — a checkbox in the admin panel. It catches some obvious bots, but referral spam and sophisticated crawlers still pollute your data. GA4's bot detection is a black box, and when it fails, you have no tools to investigate or fix it.</p>
-<p>Echelon takes bot defense seriously. Every tracker script embeds a <strong>runtime-generated WebAssembly module</strong> that browsers must solve before pageviews are accepted. The WASM blob regenerates from a random seed every 6 hours — each cycle produces unique bytecode that bot toolkits can't pre-compute. On top of that, a heuristic scoring system (0&ndash;100) evaluates every request using PoW results, interaction timing, geo data, headers, burst detection, and Cloudflare integration.</p>
+<p>Echelon takes bot defense seriously. Every tracker script embeds a <strong>runtime-generated WebAssembly module</strong> that browsers must solve before pageviews are accepted. The WASM blob regenerates every 6 hours — each cycle produces unique bytecode that bot toolkits can't pre-compute. On top of that, a heuristic scoring system (0&ndash;100) evaluates every request using PoW results, interaction timing, geo data, headers, burst detection, and Cloudflare integration.</p>
 <p>Scores &ge; 50 are excluded from rollups. You can inspect every scored request in the admin UI and adjust thresholds. Full transparency, full control.</p>
 <p><a href="bot-defense.html">Learn more about Bot Defense &rarr;</a></p>
 

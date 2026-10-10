@@ -4,9 +4,11 @@ import { AdminNav } from "../../components/AdminNav.tsx";
 import { DEBUG, PUBLIC_MODE, TELEMETRY_OVERRIDE } from "../../lib/config.ts";
 import { getLiveStats } from "../../lib/admin-stats.ts";
 import ConsentCssEditor from "../../islands/ConsentCssEditor.tsx";
+import SiteHomeEditor from "../../islands/SiteHomeEditor.tsx";
 import DebugToggle from "../../islands/DebugToggle.tsx";
 import TelemetryToggle from "../../islands/TelemetryToggle.tsx";
 import { isDebugEnabled } from "../../lib/debug.ts";
+import { findSiteSettings } from "../../lib/site-home.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -14,14 +16,13 @@ export const handler = define.handlers({
     const site = ctx.state.siteId;
     const liveStats = await getLiveStats(db);
 
-    const row = await db.queryOne<{ consent_css: string | null }>(
-      `SELECT consent_css FROM site_settings WHERE site_id = ?`,
-      site,
-    );
+    const row = await findSiteSettings(db, site);
 
     return page({
       site,
       consentCss: row?.consent_css ?? "",
+      homeCountry: row?.home_country ?? "",
+      homeLanguage: row?.home_language ?? "",
       liveStats,
       debugEnabled: isDebugEnabled(),
     });
@@ -30,7 +31,14 @@ export const handler = define.handlers({
 
 export default define.page<typeof handler>(function SettingsPage(props) {
   const { data, state } = props;
-  const { site, consentCss, liveStats, debugEnabled } = data;
+  const {
+    site,
+    consentCss,
+    homeCountry,
+    homeLanguage,
+    liveStats,
+    debugEnabled,
+  } = data;
 
   return (
     <AdminNav
@@ -66,6 +74,24 @@ export default define.page<typeof handler>(function SettingsPage(props) {
           and <code class="text-[var(--ea-text)]">data-cookie</code>{" "}
           on the script tag.
         </p>
+      </div>
+
+      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
+        <h3 class="text-sm text-[var(--ea-primary)] mb-3">
+          Home Audience — {site}
+        </h3>
+        <p class="text-xs text-[var(--ea-muted)] mb-3">
+          Where this site's visitors are expected to come from. When set,
+          visitors from another continent, and device patterns that only make
+          sense with a forged location, add to the bot score. Leave both empty
+          for a site with a worldwide audience: no geography signal is applied.
+        </p>
+        <SiteHomeEditor
+          siteId={site}
+          initialCountry={homeCountry}
+          initialLanguage={homeLanguage}
+          readOnly={PUBLIC_MODE}
+        />
       </div>
 
       <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">

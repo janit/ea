@@ -1,5 +1,6 @@
 import { useSignal } from "@preact/signals";
 import { scoreBadge } from "../components/ScoreBadge.tsx";
+import { formatFactor } from "../lib/score-factor.ts";
 
 interface Props {
   viewId?: number;
@@ -18,13 +19,32 @@ const FACTOR_LABELS: Record<string, string> = {
   referrer: "Referrer",
   pow: "PoW Token",
   pow_result: "PoW Result",
+  pow_ok: "PoW waived (proven)",
+  pow_ok_by: "PoW waived by (s = session, v = visitor)",
+  no_events: "No interaction",
+  unproven: "No PoW and no interaction",
+  no_engagement: "No engagement (strict mode)",
+  correlated: "Fingerprint cluster",
+  crawler_feed: "Crawler feed",
+  ai_crawler_feed: "AI crawler feed",
+  datacenter_ip: "Datacenter IP",
+  bot_ip: "Known bot IP",
+  win_tablet_mismatch: "Windows UA, tablet screen",
+  linux_desktop: "Linux desktop",
+  cross_site: "Many sites, one IP",
+  country_mismatch: "Country unlike site home",
+  cross_continent: "Other continent",
+  global_common_foreign: "Windows tablet, foreign",
+  linux_foreign: "Linux desktop, foreign",
+  stale_android_foreign: "Old Android, foreign",
+  classifier: "Session classifier",
 };
 
 export default function BotScoreDetail({ viewId, eventId, score }: Props) {
   const open = useSignal(false);
-  const detail = useSignal<
-    Record<string, number | string> | null | undefined
-  >(undefined);
+  const detail = useSignal<Record<string, unknown> | null | undefined>(
+    undefined,
+  );
   const loading = useSignal(false);
   const error = useSignal<string | null>(null);
 
@@ -87,7 +107,7 @@ export default function BotScoreDetail({ viewId, eventId, score }: Props) {
                         {FACTOR_LABELS[key] ?? key}
                       </td>
                       <td class="tabular-nums text-[var(--ea-primary)]">
-                        {typeof val === "string" ? val : `+${val}`}
+                        {formatFactor(val)}
                       </td>
                     </tr>
                   ))}

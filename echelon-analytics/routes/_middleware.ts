@@ -85,7 +85,7 @@ export const handler = define.middleware([
 ]);
 
 /** Paths that require permissive CORS (cross-origin tracking beacons). */
-const TRACKING_PATHS = new Set(["/b.gif", "/e", "/ea.js"]);
+const TRACKING_PATHS = new Set(["/b.gif", "/e", "/ea.js", "/c"]);
 
 export function corsHeaders(req: Request): Headers {
   const origin = req.headers.get("origin");

@@ -64,6 +64,19 @@ export interface BotScoreSignals {
   path?: string;
   visitorCountry?: string;
   siteId?: string;
+  /** Raw User-Agent header. */
+  userAgent?: string;
+  /**
+   * Which endpoint is scoring. linux_desktop is a pageview signal and is not
+   * scored when this is "events"; unset scores as the beacon does.
+   */
+  surface?: "beacon" | "events";
+  /** Distinct sites this address and user agent have hit in the last hour (beacon path only). */
+  crossSiteCount?: number;
+  /** The site's declared home country (ISO alpha-2), if any. */
+  homeCountry?: string | null;
+  /** The site's declared language (primary subtag), if any. */
+  homeLanguage?: string | null;
   /** Cloudflare bot score (1=bot, 99=human). Auto-detected from cf-bot-score header. */
   cfBotScore?: number;
   /** Cloudflare verified bot flag. Auto-detected from cf-verified-bot header. */
@@ -72,7 +85,7 @@ export interface BotScoreSignals {
   crawlerFeedMatch?: boolean;
   /** UA matches a known AI bot name from the ai-robots-txt feed. */
   aiCrawlerFeedMatch?: boolean;
-  /** Client IP falls within a known cloud provider CIDR (AWS/GCP). */
+  /** Client IP falls within a known cloud provider CIDR (AWS, GCP, DigitalOcean, Oracle). */
   datacenterIp?: boolean;
 }
 

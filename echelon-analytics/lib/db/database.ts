@@ -6,7 +6,13 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { SqliteAdapter } from "./sqlite-adapter.ts";
-import { SCHEMA_SQL } from "./schema.ts";
+import {
+  CLEAN_INTERACTION_INDEX_SQL,
+  CLEAN_INTERACTION_SQL,
+  CLEAN_INTERACTION_VISITOR_INDEX_SQL,
+  SCHEMA_SQL,
+  VALIDATED_VISITOR_INDEX_SQL,
+} from "./schema.ts";
 import { DB_PATH } from "../config.ts";
 import type { DbAdapter } from "./adapter.ts";
 import { CLEAN_SQL } from "../bot-threshold.ts";
@@ -184,6 +190,62 @@ async function migrate(adapter: DbAdapter): Promise<void> {
     console.log(
       "[echelon] Migration: added bot_score_detail to semantic_events",
     );
+  }
+
+  // validated: 1 once the view validator has found interaction evidence for
+  // the view's session. Proof of a human, as opposed to bot_score's suspicion.
+  if (!await adapter.columnExists("visitor_views", "validated")) {
+    await adapter.exec(
+      "ALTER TABLE visitor_views ADD COLUMN validated INTEGER NOT NULL DEFAULT 0",
+    );
+    console.log("[echelon] Migration: added validated to visitor_views");
+  }
+
+  // Events by session. The view validator used this until it stopped looking
+  // events up per view. Nothing names it, every statement that filters on
+  // site_id alone has idx_se_site_type_created for that, and every event
+  // insert paid for it.
+  await adapter.exec(`DROP INDEX IF EXISTS idx_se_session`);
+
+  // The engagement gate's partial indexes. Its statements name them
+  // (INDEXED BY) and fail without them, so all must exist after every start.
+  // The two gesture indexes are in SCHEMA_SQL too; like
+  // idx_vv_site_created_clean they are dead weight if built for another
+  // threshold or event list, so rebuild them.
+  for (
+    const [name, ddl] of [
+      ["idx_se_clean_interaction", CLEAN_INTERACTION_INDEX_SQL],
+      ["idx_se_clean_interaction_visitor", CLEAN_INTERACTION_VISITOR_INDEX_SQL],
+    ]
+  ) {
+    const built = await adapter.queryOne<{ sql: string }>(
+      `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`,
+      name,
+    );
+    if (built && !built.sql.includes(CLEAN_INTERACTION_SQL)) {
+      await adapter.exec(`DROP INDEX ${name}`);
+    }
+    await adapter.exec(ddl);
+  }
+  // "Does this session, or this sessionless visitor, own a validated view."
+  // Over a column added above, so it cannot live in SCHEMA_SQL.
+  await adapter.exec(
+    `CREATE INDEX IF NOT EXISTS idx_vv_validated
+     ON visitor_views(site_id, session_id, visitor_id)
+     WHERE validated = 1`,
+  );
+  // The same question by visitor alone (anonymised sites, proven-human).
+  await adapter.exec(VALIDATED_VISITOR_INDEX_SQL);
+  // Superseded by idx_vv_validated before it was released; a database
+  // started on that build still has it, and every view insert pays for it.
+  await adapter.exec(`DROP INDEX IF EXISTS idx_vv_session`);
+
+  // Per-site home country + language: the anchor for geography bot signals.
+  for (const col of ["home_country", "home_language"]) {
+    if (!await adapter.columnExists("site_settings", col)) {
+      await adapter.exec(`ALTER TABLE site_settings ADD COLUMN ${col} TEXT`);
+      console.log(`[echelon] Migration: added ${col} to site_settings`);
+    }
   }
 }
 

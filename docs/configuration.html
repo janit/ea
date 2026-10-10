@@ -88,9 +88,11 @@
 <tr><td><code>ECHELON_SUSPECT_COUNTRIES</code></td><td><code>CN</code></td><td>Comma-separated ISO-2 codes that add penalty points</td></tr>
 <tr><td><code>ECHELON_SUSPECT_POINTS</code></td><td><code>30</code></td><td>Points added per suspect country match</td></tr>
 <tr><td><code>ECHELON_SITE_SUSPECT_COUNTRIES</code></td><td><em>(empty)</em></td><td>Per-site suspect countries: <code>site:CC,CC;site:CC</code></td></tr>
-<tr><td><code>ECHELON_BOT_DISCARD_THRESHOLD</code></td><td><code>0</code></td><td>Scores &ge; this are discarded before storage. 0 = store all</td></tr>
+<tr><td><code>ECHELON_BOT_DISCARD_THRESHOLD</code></td><td><code>50</code></td><td>Scores &ge; this are discarded before storage. 0 = store all (rows scoring 50 or more are still left out of statistics)</td></tr>
 <tr><td><code>ECHELON_BOT_UA_PATTERNS</code></td><td><em>(long list)</em></td><td>Comma-separated UA substrings to drop entirely</td></tr>
 <tr><td><code>ECHELON_CHALLENGE_WINDOW_MINUTES</code></td><td><code>10</code></td><td>Minutes of past PoW challenges accepted as valid</td></tr>
+<tr><td><code>ECHELON_REQUIRE_ENGAGEMENT</code></td><td><code>false</code></td><td>Also treat sessions that never interact (click, key press, tap, form use) as bots: their views and events are raised to the bot threshold 30&ndash;180 minutes after they were written and stop counting. Visitors who only read and scroll are removed by this. Leave off unless you want engaged visits only, and do not switch it on in the same deploy as an upgrade (see <a href="installation.html#upgrading">Upgrading</a>)</td></tr>
+<tr><td><code>ECHELON_BOT_SCORE_WEIGHTS</code></td><td><em>(empty)</em></td><td>Per-signal bot score weights, <code>key:points,key:points</code> (0&ndash;100 each; 0 turns the signal off; an unknown key or bad value is ignored with a startup warning). Example: <code>linux_desktop:0</code> for a developer audience, <code>cross_site:0</code> for sibling sites. Keys: <code>timing_fast</code>, <code>timing_quick</code>, <code>burst</code>, <code>no_accept_language</code>, <code>no_sec_headers</code>, <code>screen</code>, <code>referrer</code>, <code>crawler_feed</code>, <code>ai_crawler_feed</code>, <code>datacenter_ip</code>, <code>win_tablet_mismatch</code>, <code>linux_desktop</code>, <code>cross_site</code>, <code>country_mismatch</code>, <code>cross_continent</code>, <code>global_common_foreign</code>, <code>linux_foreign</code>, <code>stale_android_foreign</code>. See <a href="bot-defense.html">Bot Defense</a> for defaults</td></tr>
 </table>
 
 <h2>Rate Limiting</h2>
@@ -134,7 +136,7 @@
 <h2>Anonymization &amp; Public Mode</h2>
 <table>
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-<tr><td><code>ECHELON_ANONYMIZE_SITES</code></td><td><em>(empty)</em></td><td>Comma-separated site IDs to anonymize before storage. Records for these sites get HMAC-hashed visitor IDs, fictional countries, redacted referrers, and codename UTMs. See <a href="telemetry.html">Telemetry</a></td></tr>
+<tr><td><code>ECHELON_ANONYMIZE_SITES</code></td><td><em>(empty)</em></td><td>Comma-separated site IDs to anonymize before storage. Records for these sites get HMAC-hashed visitor IDs, fictional countries, redacted referrers, and codename UTMs. Session ids come from a list of 50 names that unrelated visits share, so on these sites interaction validation and the engagement gate match by the anonymized visitor id (within 30 minutes) and never by session. See <a href="telemetry.html">Telemetry</a></td></tr>
 <tr><td><code>ECHELON_PUBLIC_MODE</code></td><td><code>false</code></td><td>Disable admin auth requirement. The dashboard is openly accessible without login — ideal for public analytics dashboards</td></tr>
 </table>
 

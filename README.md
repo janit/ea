@@ -23,14 +23,16 @@ out into its own project, and figured: why not share it?
 The core differentiator: every tracker script embeds a **runtime-generated
 WebAssembly module** that browsers must solve before pageviews are accepted.
 
-- WASM blob is regenerated from a random seed every **6 hours** — each
-  deployment produces unique bytecode
+- WASM blob is regenerated every **6 hours** from a seed derived from
+  `ECHELON_SECRET` (random per process if no secret is set) — each cycle
+  produces unique bytecode
 - SipHash-inspired algorithm with randomized constants — bot toolkits can't
   pre-compute solutions
 - Per-minute challenge rotation via HMAC-SHA256
 - Invisible to users — solves in <150ms in any modern browser
 - Missing or invalid tokens add penalty points to the visitor's bot score
-  (0–100)
+  (0–100); a view that sent no valid token and never interacted is later raised
+  to the bot threshold
 - Combined with heuristic scoring, Cloudflare integration, burst detection, UA
   blocklists, threat intelligence feeds (crawler UAs, AI bots, datacenter IPs),
   and async fingerprint clustering that detects coordinated bot farms
@@ -142,6 +144,25 @@ specific features:
 | `data-no-forms`     | Disable form tracking (field focus, edits, submissions)               |
 | `data-no-vitals`    | Disable Core Web Vitals (LCP, CLS, INP) via PerformanceObserver       |
 
+### Content Security Policy on the Host Site
+
+If the site embedding the tracker sends a `Content-Security-Policy` header, it
+must let the tracker reach your Echelon host: the host in `script-src` (to load
+`/ea.js`), in `img-src` (the `/b.gif` pixel) and in `connect-src` (for `/c` and
+`/e`), plus `'wasm-unsafe-eval'` in `script-src` so the proof-of-work module can
+run:
+
+```
+script-src 'self' https://echelon.example.com 'wasm-unsafe-eval';
+connect-src 'self' https://echelon.example.com;
+img-src 'self' https://echelon.example.com
+```
+
+Without `'wasm-unsafe-eval'` the tracker still works but sends no token, so its
+requests carry the +30 missing-token penalty instead of being discarded at
+ingest. A view with no token and no interaction is later raised to the bot
+threshold by the engagement gate (see Bot Scoring).
+
 ### Markup for Clicks and Hovers
 
 ```html
@@ -181,12 +202,13 @@ These fire without any markup:
 
 ### Public (no auth, CORS-enabled)
 
-| Endpoint          | Purpose                               |
-| ----------------- | ------------------------------------- |
-| `GET /ea.js`      | Tracker script (with embedded PoW)    |
-| `GET /b.gif`      | Pixel beacon (pageview recording)     |
-| `POST /e`         | Semantic events (sendBeacon receiver) |
-| `GET /api/health` | Health check                          |
+| Endpoint          | Purpose                                                                        |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `GET /ea.js`      | Tracker script (with embedded PoW)                                             |
+| `GET /b.gif`      | Pixel beacon (pageview recording)                                              |
+| `POST /e`         | Semantic events (sendBeacon receiver)                                          |
+| `GET /c`          | Current PoW challenge, used by the tracker to refresh its token (rate-limited) |
+| `GET /api/health` | Health check                                                                   |
 
 ### Authenticated (Bearer token or session cookie)
 
@@ -246,9 +268,10 @@ These fire without any markup:
 
 **Site Settings:**
 
-| Endpoint               | Purpose                                |
-| ---------------------- | -------------------------------------- |
-| `PATCH /api/sites/:id` | Update per-site settings (consent CSS) |
+| Endpoint               | Purpose                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| `GET /api/sites/:id`   | Read per-site settings                                                                                  |
+| `PATCH /api/sites/:id` | Update per-site settings (consent CSS, home country and language); fields not sent are left as they are |
 
 **Admin UI** is available at `/admin/` with a persistent site/days selector in
 the nav header. Pages: live dashboard (Now gauge, 60-min/24h SVG charts, recent
@@ -271,9 +294,9 @@ Every request is scored 0–100 using multiple detection layers:
 | Cloudflare verified bot            | +15    |
 | Suspected bot IP (UA leak)         | +20    |
 | Confirmed bot IP (correlated)      | +50    |
-| PoW token invalid                  | +25    |
-| PoW token replayed                 | +40    |
-| PoW token missing                  | +15    |
+| PoW token missing                  | +30    |
+| PoW token invalid (pageview)       | +50    |
+| PoW token invalid (events)         | +40    |
 | Interaction time < 850ms           | +20    |
 | Interaction time 850–999ms         | +8     |
 | Suspect country (configurable)     | +30    |
@@ -282,14 +305,31 @@ Every request is scored 0–100 using multiple detection layers:
 | Missing Sec-CH-UA + Sec-Fetch-Site | +10    |
 | Unrealistic screen dimensions      | +10    |
 | No referrer + deep path            | +5     |
+| Windows UA at tablet screen width  | +34    |
+| Linux desktop (pageviews only)     | +10    |
+| One IP on 3+ sites within an hour  | +34    |
+| Country unlike site home           | +15    |
+| Visitor on another continent       | +8     |
+| Windows tablet, foreign            | +15    |
+| Linux desktop, foreign             | +30    |
+| Android 6 or older, foreign        | +40    |
 
 ### Threat Intelligence Feeds (async refresh every 6 hours)
 
-| Feed                                               | Points |
-| -------------------------------------------------- | ------ |
-| Crawler UA match (monperrus/crawler-user-agents)   | +30    |
-| AI bot UA match (ai-robots-txt/robots.json)        | +40    |
-| Datacenter IP (AWS + GCP CIDR ranges, IPv4 + IPv6) | +15    |
+| Feed                                                                    | Points |
+| ----------------------------------------------------------------------- | ------ |
+| Crawler UA match (monperrus/crawler-user-agents)                        | +30    |
+| AI bot UA match (ai-robots-txt/robots.json)                             | +40    |
+| Datacenter IP (AWS, GCP, DigitalOcean, Oracle Cloud; IPv4 + IPv6 CIDRs) | +24    |
+
+Each provider's ranges are kept independently: a refresh that fails, is empty or
+shrinks to under 10% of the previous size is discarded.
+
+The Windows tablet, cross-site and datacenter weights are 34, 34 and 24 rather
+than round numbers on purpose. A real visitor can carry any one of them, and one
+who then reads without clicking gets +15 from the engagement gate; the sums stay
+under the threshold of 50. The Linux desktop +10 is scored on pageviews only,
+not on the events endpoint, where an invalid token is already +40.
 
 ### Async Bot Correlator (background sweep every 2 min)
 
@@ -305,9 +345,158 @@ fingerprint — real users have varied configurations (especially
 Accept-Language). Confirmed cluster IPs are fed back into the confirmed bot IP
 map for immediate scoring of future requests.
 
+Before penalising a visitor, the correlator requires their first print to be at
+least 12 minutes old and skips proven humans (a validated view that is not from
+a datacenter IP). Only penalised visitors' IPs are fed back into the confirmed
+bot IP map. Its updates also reach the rows of anonymized sites.
+
 Visitors scoring ≥ 50 are excluded from daily rollups. Known bot User-Agents
 (Googlebot, GPTBot, ClaudeBot, HeadlessChrome, curl, etc.) are dropped
 immediately before scoring.
+
+### Engagement Gate (same sweep)
+
+| Signal                                                            | Points |
+| ----------------------------------------------------------------- | ------ |
+| No interaction within 5–30 min                                    | +15    |
+| No interaction, and a PoW penalty or a waiver by visitor key only | → 50   |
+| No interaction, strict mode (30–180 min)                          | → 50   |
+
+A view aged 5–30 minutes whose session produced no interaction event gets +15.
+If it also carries any PoW penalty (missing or invalid token), or its PoW was
+waived only by the visitor key (`pow_ok_by: "v"`), it is raised to the threshold
+instead. Passive events (bounce, session end, web vitals, scroll) do not count
+as interaction. A session that interacted at any time is shielded as a whole,
+and validated views are never touched.
+
+Both penalties are provisional. Someone who reads with a mouse wheel or trackpad
+may not click or press a key until after their view was judged, so each sweep
+first looks back 180 minutes: if the session has interacted since, exactly what
+was added is taken off again and the view can be validated. Each mark
+(`no_events`, `unproven`) stores the points it added for this purpose.
+
+In strict mode (below), views and events of a session that never interacted are
+raised to the threshold once they are 30–180 minutes old. That is not undone by
+a later interaction.
+
+On anonymized sites (`ECHELON_ANONYMIZE_SITES`) the stored session id is one of
+50 names shared by unrelated visits, so there the gate and the validator match
+by the stored visitor id instead: an interaction counts for a view or event only
+if it has the same visitor id and happened within 30 minutes of it.
+
+### Validated Visitors
+
+A bot score says how suspicious a request looked. `validated` says something
+stronger: the session did something only a person does. The tracker reports the
+first click, key press or tap on each page as an `engage` event, and a
+background validator (every 60 seconds) marks a view validated once its session
+has such an event and stayed on the page for at least two seconds (or showed a
+later interaction plus two distinct interaction types). Scrolling and automatic
+events (bounce, session end, web vitals, custom events) never validate a view.
+
+The dashboard shows validated visitors next to unique visitors, and the overview
+API returns `validated_visitors`. Retroactive penalties, such as the
+fingerprint-cluster correlator, never touch a validated visitor.
+
+Set `ECHELON_REQUIRE_ENGAGEMENT=true` to count only sessions that interacted. It
+is off by default because, on a content site, people who read and leave are real
+visitors.
+
+### Home Audience
+
+Under **Settings → Home Audience** each site can declare a home country (ISO
+alpha-2) and language, or set `home_country` and `home_language` with
+`PATCH /api/sites/:id`. The home country must be an assigned code that Echelon
+can place on a continent, or `RU`; anything else (`UK` for `GB`, `EN`, `XX`) is
+refused with a 400, and a code of that kind already stored is treated as not
+set. Russia spans two continents and has none in the table, so with a home of
+`RU` no visitor shares its continent: every visitor from another country is a
+mismatch, neighbours included (the exemption below for countries that show up
+everywhere still holds). The geography rows in the table above (country unlike
+site home, another continent, and the three "foreign" device rows) only apply to
+sites that have done so; a visitor is "foreign" relative to that home. It needs
+a visitor country, which comes from `ECHELON_BEHIND_CLOUDFLARE` or
+`ECHELON_TRUST_GEO_HEADERS`. Visitors from the same continent are never a
+mismatch, a country the continent table does not know (`XX`, `T1`) is never
+foreign, and on English-language sites (or with no language set) visitors from
+countries that show up everywhere (US, CA, AU, NZ, JP, KR, SG, IN, TR, RU, MA,
+AE, MX, PK) are exempt from the +15. The three "foreign" device rows need one of
+those countries that is not the site's own: Windows tablet, foreign applies on
+any site; Linux desktop, foreign and Android 6 or older, foreign also need the
+country mismatch, so they apply only where the home language is not English.
+Leave it empty for a worldwide audience.
+
+Opting in has a cost for real visitors, so decide per site:
+
+- On a site whose home language is not English, a Linux desktop or an Android 6
+  or older visitor from one of those countries scores 63 from these signals
+  alone, which is over the threshold of 50, and is not counted. Other foreign
+  visitors carry 15 to 23 points; they are not dropped, but they sit closer to
+  the threshold when anything else is off.
+- Windows tablet rows use the screen width the tracker reports in CSS pixels. A
+  real Windows laptop with display scaling can land in the 768 to 1024 band (for
+  example 1280 wide at 125% or 1366 at 150%) and carry +34. Lower
+  `win_tablet_mismatch`, or set it to 0, if your audience uses such displays.
+- "One IP on 3+ sites" counts an address and browser seen on three or more of
+  this instance's sites within an hour. A person who browses sibling sites you
+  run together will trip it. Browsers now send nearly identical user agents, so
+  people who share one address (an office, a campus, a mobile carrier) pool into
+  one count as well. Set `cross_site:0` on an instance whose sites share an
+  audience. It is scored on the pageview beacon only, and never when the client
+  address cannot be resolved (no peer address, or a forwarded header arriving
+  without `ECHELON_TRUST_PROXY`).
+
+### Session classifier
+
+Every 15 minutes Echelon looks over the last 30 minutes for bots that only show
+across requests, judging an identity once its oldest view is 12 minutes old:
+
+- `session_velocity`: six or more page visits, to six or more different pages,
+  averaging 3 seconds or less apart. Pages are told apart by pathname, and
+  consecutive views of one page count once: views that differ only in query
+  string or fragment (pagination, a carousel or a map that keeps its state in
+  the URL) are one visit
+- `os_rotation`: three or more operating-system names in one vendor family
+- `os_family_flip`: two or more of Apple, Android and Windows on one session or
+  visitor
+- `burst_cohort`: 40 or more single-view sessions on one site with the same
+  country and screen size, from a different continent than the site's home
+  country (needs a home country; does nothing when either country has no known
+  continent)
+
+The first run is two minutes after start. Flagged rows are scored 60 and the
+visitor is excluded automatically as `auto:<reason>`; daily maintenance removes
+those exclusions after 30 days. A manual un-exclude on the admin bots page
+reverses a wrong one, and excluding such a visitor by hand replaces the `auto:`
+label, which makes the exclusion permanent. Visitors who have been validated are
+spared by `session_velocity` and `os_rotation`, but not by `os_family_flip` and
+`burst_cohort`, whose patterns cannot be one real person. That has a side
+effect: using browser DevTools device emulation or a user-agent switcher in one
+tab can trip `os_family_flip` on yourself. On anonymized sites session-keyed
+findings are skipped.
+
+### Duplicate beacons
+
+Mobile networks and service workers sometimes deliver the same pageview request
+more than once. The tracker puts a random per-pageview nonce on the landing
+pageview beacon; a beacon with the same site, session and nonce as one recorded
+in the last 10 minutes is answered normally but not counted. A reload or new
+page load gets a new nonce and is counted. A beacon without a well-formed nonce
+is always counted, and SPA navigation beacons and beacons with no session id are
+exempt.
+
+### Tuning weights
+
+Every weight in the tables above can be changed with
+`ECHELON_BOT_SCORE_WEIGHTS`, for example `linux_desktop:0` for a developer
+audience. Keys: `timing_fast`, `timing_quick`, `burst`, `no_accept_language`,
+`no_sec_headers`, `screen`, `referrer`, `crawler_feed`, `ai_crawler_feed`,
+`datacenter_ip`, `win_tablet_mismatch`, `linux_desktop`, `cross_site`,
+`country_mismatch`, `cross_continent`, `global_common_foreign`, `linux_foreign`,
+`stale_android_foreign`. Values are 0 to 100; an unknown key or bad value is
+ignored with a warning at startup, and 0 turns that signal off.
+
+### Referrers and IP privacy
 
 Referrer traffic is classified as `ai` (ChatGPT, Claude, Perplexity, Gemini),
 `search` (Google, Bing, DuckDuckGo, etc.), `social` (Facebook, X, Reddit,
@@ -343,9 +532,14 @@ reverse proxies (compares hosts, not full origins).
 
 ### PoW Nonce Tracking
 
-Solved proof-of-work tokens are tracked in memory. Replaying a previously-used
-token adds penalty points to the bot score instead of passing verification.
-Nonces expire with the challenge window (default 10 minutes).
+A solved token is bound to its session and site and is accepted for the
+challenge window (10 minutes by default). The tracker fetches a fresh challenge
+from `/c` and re-solves before that window closes, so long-lived tabs keep
+sending valid tokens. A session or visitor that has presented a valid token is
+not penalised for a missing or stale one during the following hour; the waived
+amount is recorded as `pow_ok` in the score breakdown, and `pow_ok_by` records
+which key granted it (`s` session, `v` visitor). A waiver granted by the visitor
+key alone does not protect a view from the engagement gate's `unproven` rule.
 
 ### Response Headers
 
@@ -387,6 +581,11 @@ Sites listed in `ECHELON_ANONYMIZE_SITES` get deterministic anonymization
 All mappings are deterministic within a day (same input produces same output) so
 analytics aggregation still works. Mappings rotate daily and are not reversible.
 
+Session names come from a small list, so unrelated sessions on an anonymized
+site can share one. Interaction validation and the engagement gate therefore
+ignore the session id on such sites and match views to interactions by the
+anonymized visitor id, within 30 minutes (see Engagement Gate).
+
 ## Telemetry
 
 Opt-in anonymous usage tracking helps improve Echelon Analytics. No visitor
@@ -419,7 +618,9 @@ Two independent auth modes (can be used simultaneously):
 | `ECHELON_BOT_RETENTION_DAYS`       | _(= RETENTION_DAYS)_ | Bot-scored data retention (days, defaults to RETENTION_DAYS) |
 | `ECHELON_SUSPECT_COUNTRIES`        | `CN`                 | Comma-separated country codes for bot scoring                |
 | `ECHELON_SUSPECT_POINTS`           | `30`                 | Points added for suspect countries                           |
-| `ECHELON_BOT_DISCARD_THRESHOLD`    | `0`                  | Bot score at which to drop requests entirely (0 = store all) |
+| `ECHELON_BOT_DISCARD_THRESHOLD`    | `50`                 | Bot score at which to drop requests entirely (0 = store all) |
+| `ECHELON_REQUIRE_ENGAGEMENT`       | `false`              | Raise sessions that never interact to the bot threshold      |
+| `ECHELON_BOT_SCORE_WEIGHTS`        | _(empty)_            | Per-signal weight overrides, `key:points,key:points`         |
 | `ECHELON_BOT_UA_PATTERNS`          | _(long default)_     | Comma-separated bot UA substrings to drop silently           |
 | `ECHELON_ALLOWED_ORIGINS`          | _(empty = open)_     | Restrict which domains can send tracking data                |
 | `ECHELON_RATE_LIMIT_MAX`           | `100`                | Max requests per IP per window on tracking endpoints         |
@@ -479,12 +680,14 @@ since they require Chromium.
 - **`semantic_events`** — behavioral events (bounce, scroll, click, hover,
   session lifecycle, web vitals, custom events) with experiment/campaign linkage
 - **`visitor_views_daily`** — pre-aggregated daily rollup (runs at 03:00 UTC)
-- **`excluded_visitors`** — admin blocklist
+- **`excluded_visitors`** — admin blocklist, plus `auto:<reason>` entries from
+  the session classifier
 - **`experiments`** / **`experiment_variants`** — A/B experiment definitions
   with weighted variant allocation
 - **`utm_campaigns`** — registered UTM campaign definitions per site
 - **`perf_metrics`** — CI/CD performance benchmark records
-- **`site_settings`** — per-site configuration (consent CSS)
+- **`site_settings`** — per-site configuration (consent CSS, home country and
+  language)
 - **`maintenance_log`** — daily rollup run records
 
 Raw data is retained for 90 days (configurable via `ECHELON_RETENTION_DAYS`).
@@ -597,6 +800,42 @@ strip the `Server` header.
 **Important:** The server must run with a single worker (do not use `--parallel`
 with `deno serve`) because sessions, rate limits, buffered writers, and caches
 are held in-memory.
+
+### Upgrading
+
+Upgrading to a version with validated visitors and the engagement gate (from one
+without them) changes three things on the first start:
+
+- New indexes are built over `semantic_events` before the server starts
+  listening. Allow a few seconds per million stored events; requests are not
+  answered until it finishes.
+- The first sweep after the start adds +15 to views from the last 30 minutes
+  whose session sent only automatic events (bounce, session end, web vitals,
+  scroll). Those events used to shield a view from the no-interaction penalty
+  and no longer do.
+- Do not turn on `ECHELON_REQUIRE_ENGAGEMENT` in the same deploy. Run the new
+  version in its default mode first and compare validated visitors with unique
+  visitors; strict mode then removes every visit that did not interact, going
+  back three hours, on its first sweep.
+
+Upgrading to a version with the device, cross-site and geography signals:
+
+- From the first request after the upgrade, with no opt-in, the Windows tablet,
+  Linux desktop and cross-site signals and the larger datacenter list (now also
+  DigitalOcean and Oracle Cloud) apply on every site. Only the geography signals
+  wait for a home country.
+- A request that scores at or over `ECHELON_BOT_DISCARD_THRESHOLD` (default 50)
+  when it arrives is not stored, so a wrong drop cannot be recovered or even
+  seen. To audit the new signals, run the first days with
+  `ECHELON_BOT_DISCARD_THRESHOLD=0`, which turns write-time discarding off: no
+  request is then dropped for its score, and each is stored with its score and
+  score detail (known-bot user agents, excluded visitors, rate-limited requests
+  and duplicate beacons are still not stored). Rows scoring 50 or more are still
+  left out of all statistics and rollups; they show on the admin bots pages and
+  are purged on the bot retention schedule (`ECHELON_BOT_RETENTION_DAYS`). Set
+  the threshold back once the scores look right.
+- The first start drops an unused index on `semantic_events` (`idx_se_session`);
+  no action is needed.
 
 ## Documentation
 

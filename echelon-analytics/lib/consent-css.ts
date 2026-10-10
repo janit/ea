@@ -1,8 +1,11 @@
 // Echelon Analytics — Per-Site Consent Banner CSS Cache
 //
 // Caches custom CSS from site_settings table, refreshed every 60 seconds.
+// Keyed by lower-cased site id, from the row loadSiteSettings() picks for
+// each site: the same row the API writes to and the settings page shows.
 
 import type { DbAdapter } from "./db/adapter.ts";
+import { loadSiteSettings } from "./site-home.ts";
 
 const cache = new Map<string, string>();
 let refreshedAt = 0;
@@ -14,17 +17,17 @@ export function markConsentCssStale(): void {
 
 export async function refreshConsentCss(db: DbAdapter): Promise<void> {
   if (!stale && Date.now() - refreshedAt < 60_000) return;
+  const sites = await loadSiteSettings(db);
   cache.clear();
-  const rows = await db.query<{ site_id: string; consent_css: string }>(
-    `SELECT site_id, consent_css FROM site_settings WHERE consent_css IS NOT NULL`,
-  );
-  for (const r of rows) cache.set(r.site_id, r.consent_css);
+  for (const [siteId, r] of sites) {
+    if (r.consent_css !== null) cache.set(siteId, r.consent_css);
+  }
   refreshedAt = Date.now();
   stale = false;
 }
 
 export function getConsentCss(siteId: string): string {
-  return cache.get(siteId) ?? "";
+  return cache.get(siteId.toLowerCase()) ?? "";
 }
 
 /**

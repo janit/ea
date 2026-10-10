@@ -141,6 +141,7 @@ duckdb -c "ATTACH 'echelon.db' AS ea (TYPE sqlite)"
 <tr><td><code>referrer</code></td><td>TEXT</td><td>Full referrer URL (nullable)</td></tr>
 <tr><td><code>referrer_type</code></td><td>TEXT</td><td>Classified referrer: <code>direct</code>, <code>search</code>, <code>social</code>, <code>other</code></td></tr>
 <tr><td><code>bot_score</code></td><td>INTEGER</td><td>Bot likelihood 0&ndash;100. Scores &ge;50 are suspect.</td></tr>
+<tr><td><code>validated</code></td><td>INTEGER</td><td><code>1</code> once the session has proof of interaction (a click, key press, tap or form use, and time on the page), <code>0</code> otherwise. Proof of a person, as opposed to <code>bot_score</code>, which is suspicion. Visitors counted in the overview as <code>validated_visitors</code> own a view with <code>validated = 1</code>.</td></tr>
 <tr><td><code>is_pwa</code></td><td>INTEGER</td><td><code>1</code> if loaded as a Progressive Web App</td></tr>
 <tr><td><code>utm_source</code></td><td>TEXT</td><td>UTM source parameter</td></tr>
 <tr><td><code>utm_medium</code></td><td>TEXT</td><td>UTM medium parameter</td></tr>
@@ -192,7 +193,7 @@ duckdb -c "ATTACH 'echelon.db' AS ea (TYPE sqlite)"
 <p><strong>Indexes:</strong> (site_id, event_type, created_at), visitor_id, (created_at, bot_score), (experiment_id, variant_id), (utm_campaign, site_id WHERE utm_campaign IS NOT NULL).</p>
 
 <h3>excluded_visitors</h3>
-<p>Visitor IDs manually flagged for exclusion from rollups and dashboards.</p>
+<p>Visitor IDs flagged for exclusion from rollups and dashboards, by an operator or automatically by the session classifier (label <code>auto:&lt;reason&gt;</code>, removed by daily maintenance after 30 days).</p>
 <table>
 <tr><th>Column</th><th>Type</th><th>Description</th></tr>
 <tr><td><code>visitor_id</code></td><td>TEXT</td><td>Primary key — the visitor to exclude</td></tr>
@@ -242,11 +243,13 @@ duckdb -c "ATTACH 'echelon.db' AS ea (TYPE sqlite)"
 <p><strong>Unique constraint:</strong> (utm_campaign, site_id) — one campaign per site per UTM value.</p>
 
 <h3>site_settings</h3>
-<p>Per-site configuration, currently used for custom consent banner CSS.</p>
+<p>Per-site configuration: custom consent banner CSS and the site&rsquo;s home audience for geography bot signals.</p>
 <table>
 <tr><th>Column</th><th>Type</th><th>Description</th></tr>
 <tr><td><code>site_id</code></td><td>TEXT</td><td>Primary key — site identifier</td></tr>
 <tr><td><code>consent_css</code></td><td>TEXT</td><td>Custom CSS for the cookie consent banner</td></tr>
+<tr><td><code>home_country</code></td><td>TEXT</td><td>ISO 3166-1 alpha-2 code of the audience&rsquo;s home country; NULL = geography signals off</td></tr>
+<tr><td><code>home_language</code></td><td>TEXT</td><td>Primary language subtag of the audience (e.g. <code>fi</code>, <code>en</code>); NULL = treated as English</td></tr>
 <tr><td><code>updated_at</code></td><td>TEXT</td><td>Last update timestamp</td></tr>
 </table>
 

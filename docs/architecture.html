@@ -64,7 +64,7 @@
 <hr>
 
 <h2>Overview</h2>
-<p>Echelon Analytics is a Deno + Fresh application backed by a single SQLite database. All state — sessions, rate limiter, burst maps, buffered writers — lives in memory. Runs as a single process (no <code>--parallel</code> flag).</p>
+<p>Echelon Analytics is a Deno + Fresh application backed by a single SQLite database. All state — sessions, rate limiter, burst maps, cross-site map, beacon dedup map, site home cache, buffered writers — lives in memory. Runs as a single process (no <code>--parallel</code> flag).</p>
 
 <h2>Tech Stack</h2>
 <table>
@@ -104,7 +104,7 @@
   <li>Known bot UA filter — drop matching requests</li>
   <li>Visitor identity — HMAC hash (cookieless) or <code>_ev</code> cookie (opt-in)</li>
   <li>Bot scoring — compute 0&ndash;100 heuristic score</li>
-  <li>PoW verification — valid (+0), missing (+15), or invalid (+25)</li>
+  <li>PoW verification — valid (+0), missing (+30), or invalid (+50 on <code>/b.gif</code>, +40 on <code>/e</code>)</li>
   <li>Data enrichment — geo, device type, OS, referrer classification</li>
   <li>Push to in-memory <code>BufferedWriter</code></li>
 </ul>
@@ -139,11 +139,11 @@
 <h3>Supporting Tables</h3>
 <table>
 <tr><th>Table</th><th>Purpose</th></tr>
-<tr><td><code>excluded_visitors</code></td><td>Manually excluded visitor IDs</td></tr>
+<tr><td><code>excluded_visitors</code></td><td>Excluded visitor IDs (manual, and <code>auto:&lt;reason&gt;</code> from the session classifier)</td></tr>
 <tr><td><code>experiments</code></td><td>A/B experiment metadata</td></tr>
 <tr><td><code>experiment_variants</code></td><td>Variant definitions and weights</td></tr>
 <tr><td><code>utm_campaigns</code></td><td>Campaign tracking</td></tr>
-<tr><td><code>site_settings</code></td><td>Per-site consent CSS</td></tr>
+<tr><td><code>site_settings</code></td><td>Per-site consent CSS, home country and language</td></tr>
 <tr><td><code>perf_metrics</code></td><td>CI/CD performance tracking</td></tr>
 <tr><td><code>maintenance_log</code></td><td>Rollup status tracking</td></tr>
 </table>
@@ -198,10 +198,10 @@
 
 <h2>Proof-of-Work System</h2>
 <ul>
-  <li>WASM module generated from a 64-byte random seed every 6 hours</li>
+  <li>WASM module generated every 6 hours from a 64-byte seed derived from <code>ECHELON_SECRET</code> (random per process if no secret is set)</li>
   <li>Implements a SipHash-inspired algorithm with randomized constants</li>
   <li>Challenge string rotates every minute (HMAC-SHA256 of minute bucket)</li>
-  <li>Client solves and caches token in <code>sessionStorage</code> (90% reuse, 10% re-solve)</li>
+  <li>Client solves and caches token in <code>sessionStorage</code> (reused while the challenge matches; about one page load in ten solves again; an open tab re-solves when its token is 4 minutes old)</li>
   <li>150ms solve timeout — if WASM is too slow, beacon fires without token (penalty applied)</li>
   <li>Server verifies against current + previous WASM slots and last N minute buckets</li>
 </ul>
@@ -261,6 +261,10 @@
     beacon.ts              Pageview beacon handler
     events-endpoint.ts     Behavioral events handler
     bot-score.ts           Bot scoring heuristics
+    geo.ts                 Country to continent, mismatch rules
+    site-home.ts           Per-site home country and language
+    session-classifier.ts  Cross-request bot patterns (every 15 min)
+    beacon-dedup.ts        Drops redelivered pageview beacons
     challenge.ts           PoW challenge management
     challenge-wasm.ts      WASM bytecode builder
     buffered-writer.ts     Generic batch writer
@@ -284,6 +288,7 @@
     ea.js.ts               GET /ea.js
     b.gif.ts               GET /b.gif
     e.ts                   POST /e
+    c.ts                   GET /c (current PoW challenge for token refresh)
     _middleware.ts          CORS, security headers
     api/                   REST API routes
     admin/                 Admin UI routes

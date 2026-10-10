@@ -1,7 +1,10 @@
 import { assertEquals } from "@std/assert";
+import { getBotIpPenalty } from "@/lib/bot-score.ts";
 import { createTestDb, insertEvent, insertView } from "./_helpers.ts";
 import {
+  _eventPenaltySql as eventPenaltySql,
   _sweep as sweep,
+  _viewPenaltySql as viewPenaltySql,
   type Fingerprint,
   recordPrint,
   type RequestPrint,
@@ -34,7 +37,8 @@ function makePrint(
     siteId: "south-africa.afroute.com",
     fingerprint: fp,
     headlessTainted: false,
-    timestamp: Date.now(),
+    // Thirteen minutes old: past the correlator's 12 minute settle time.
+    timestamp: Date.now() - 13 * 60_000,
     ...overrides,
     // Re-apply fingerprint since overrides spread may clobber it
     ...(overrides.fingerprint ? { fingerprint: fp } : {}),
@@ -432,4 +436,387 @@ Deno.test({
       assertEquals(r.bot_score, 0); // No updates
     }
   },
+});
+
+Deno.test({
+  name:
+    "bot-correlator — a proven human in a cluster is spared; the rest are penalised",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    const site = "corr-proven-site";
+    for (let i = 0; i < 8; i++) {
+      const vid = `corrproven${i}`.padEnd(16, "0");
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: site,
+        bot_score: 0,
+        validated: i === 0 ? 1 : 0,
+        // Recent, so the engagement gate (also run by sweep) leaves it alone.
+        created_at: new Date().toISOString(),
+      });
+      recordPrint(makePrint(`corr_proven_ip_${i}`, vid, { siteId: site }));
+    }
+
+    await sweep(db);
+
+    const rows = await db.query<{ visitor_id: string; bot_score: number }>(
+      "SELECT visitor_id, bot_score FROM visitor_views WHERE site_id = ? ORDER BY visitor_id",
+      site,
+    );
+    assertEquals(rows[0].bot_score, 0, "validated visitor untouched");
+    for (const r of rows.slice(1)) assertEquals(r.bot_score, 50);
+    await db.close();
+  },
+});
+
+Deno.test({
+  name:
+    "bot-correlator — a visitor seen less than 12 minutes ago is not penalised yet",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    const site = "corr-settle-site";
+    for (let i = 0; i < 8; i++) {
+      const vid = `corrsettle${i}`.padEnd(16, "0");
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: site,
+        bot_score: 0,
+        created_at: new Date().toISOString(),
+      });
+      recordPrint(
+        makePrint(`corr_settle_ip_${i}`, vid, {
+          siteId: site,
+          // Visitor 0 arrived eleven minutes ago; the other seven thirteen.
+          ...(i === 0 ? { timestamp: Date.now() - 11 * 60_000 } : {}),
+        }),
+      );
+    }
+
+    await sweep(db);
+
+    const rows = await db.query<{ visitor_id: string; bot_score: number }>(
+      "SELECT visitor_id, bot_score FROM visitor_views WHERE site_id = ? ORDER BY visitor_id",
+      site,
+    );
+    assertEquals(rows[0].bot_score, 0, "new arrival has time to prove itself");
+    for (const r of rows.slice(1)) assertEquals(r.bot_score, 50);
+    await db.close();
+  },
+});
+
+Deno.test({
+  name:
+    "bot-correlator — only penalised visitors' IPs become confirmed bot IPs",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    const site = "corr-ip-site";
+    for (let i = 0; i < 8; i++) {
+      const vid = `corrip${i}`.padEnd(16, "0");
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: site,
+        validated: i === 0 ? 1 : 0,
+        created_at: new Date().toISOString(),
+      });
+      recordPrint(makePrint(`corr_ip_hash_${i}`, vid, { siteId: site }));
+    }
+    await sweep(db);
+    assertEquals(getBotIpPenalty("corr_ip_hash_0"), 0, "proven visitor's IP");
+    assertEquals(getBotIpPenalty("corr_ip_hash_1"), 50);
+    await db.close();
+  },
+});
+
+Deno.test({
+  name:
+    "bot-correlator — a visitor skipped as unsettled is penalised by a later sweep, and its IP is confirmed only then",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    const site = "corr-later-site";
+    const now = Date.now();
+    for (let i = 0; i < 8; i++) {
+      const vid = `corrlater${i}`.padEnd(16, "0");
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: site,
+        bot_score: 0,
+        created_at: new Date(now).toISOString(),
+      });
+      recordPrint(
+        makePrint(`corr_later_ip_${i}`, vid, {
+          siteId: site,
+          timestamp: now - (i === 0 ? 11 : 13) * 60_000,
+        }),
+      );
+    }
+    const scores = async () =>
+      (await db.query<{ bot_score: number }>(
+        "SELECT bot_score FROM visitor_views WHERE site_id = ? ORDER BY visitor_id",
+        site,
+      )).map((r) => r.bot_score);
+
+    await sweep(db, now);
+    assertEquals(await scores(), [0, 50, 50, 50, 50, 50, 50, 50]);
+    assertEquals(getBotIpPenalty("corr_later_ip_0"), 0, "unsettled: no IP");
+    assertEquals(getBotIpPenalty("corr_later_ip_1"), 50);
+
+    // The next sweep, two minutes on: thirteen minutes since first seen.
+    await sweep(db, now + 2 * 60_000);
+    assertEquals(await scores(), [50, 50, 50, 50, 50, 50, 50, 50]);
+    assertEquals(getBotIpPenalty("corr_later_ip_0"), 50);
+    await db.close();
+  },
+});
+
+Deno.test({
+  name: "bot-correlator — a failing engagement gate does not cancel clustering",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    // The gate names this index and fails without it.
+    await db.exec("DROP INDEX idx_se_clean_interaction");
+    const site = "corr-gate-fails-site";
+    for (let i = 0; i < 8; i++) {
+      const vid = `corrgatefail${i}`.padEnd(16, "0");
+      await insertView(db, { visitor_id: vid, site_id: site, bot_score: 0 });
+      recordPrint(makePrint(`corr_gate_fail_ip_${i}`, vid, { siteId: site }));
+    }
+    const logged: unknown[][] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => logged.push(args);
+    try {
+      await sweep(db);
+    } finally {
+      console.error = error;
+    }
+    assertEquals(logged.length, 1);
+    assertEquals(
+      String(logged[0][0]).includes("engagement gate failed"),
+      true,
+      String(logged[0][0]),
+    );
+    assertEquals(
+      String((logged[0][1] as Error).message).includes(
+        "idx_se_clean_interaction",
+      ),
+      true,
+    );
+    const rows = await db.query<{ bot_score: number }>(
+      "SELECT bot_score FROM visitor_views WHERE site_id = ?",
+      site,
+    );
+    assertEquals(rows.map((r) => r.bot_score), Array(8).fill(50));
+    await db.close();
+  },
+});
+
+Deno.test({
+  name:
+    "bot-correlator — cluster members the gate raised first are still marked, and a late gesture does not release them",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    const site = "corr-gate-first-site";
+    const t0 = Date.now();
+    const min = (n: number) => t0 + n * 60_000;
+    const seen = new Date(t0).toISOString();
+    // One cluster of 8: four sent no token, four did. Plus a tokenless
+    // visitor on the same site who is in no cluster.
+    const ids = Array.from(
+      { length: 8 },
+      (_, i) => `corrgate${i}`.padEnd(16, "0"),
+    );
+    for (const [i, vid] of [...ids, "loner".padEnd(16, "0")].entries()) {
+      const tokenless = i < 4 || i === 8;
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: site,
+        session_id: `s-${vid}`,
+        bot_score: tokenless ? 30 : 0,
+        bot_score_detail: tokenless ? '{"pow":30}' : null,
+        created_at: seen,
+      });
+      if (i < 8) {
+        recordPrint(
+          makePrint(`corr_gate_ip_${i}`, vid, { siteId: site, timestamp: t0 }),
+        );
+      }
+    }
+    const rows = async () =>
+      (await db.query<
+        { visitor_id: string; bot_score: number; bot_score_detail: string }
+      >(
+        "SELECT visitor_id, bot_score, bot_score_detail FROM visitor_views WHERE site_id = ? ORDER BY id",
+        site,
+      )).map((r) => ({
+        score: r.bot_score,
+        keys: Object.keys(JSON.parse(r.bot_score_detail)).sort().join(","),
+      }));
+
+    // 6 minutes: the gate judges everyone idle. Nobody is settled yet.
+    await sweep(db, min(6));
+    assertEquals((await rows()).map((r) => r.score), [
+      ...Array(4).fill(50),
+      ...Array(4).fill(15),
+      50,
+    ]);
+
+    // 14 minutes: the cluster is settled. The tokenless half is already at
+    // the threshold; it must be judged all the same.
+    await sweep(db, min(14));
+    const judged = await rows();
+    for (const r of judged.slice(0, 4)) {
+      assertEquals(r, { score: 100, keys: "correlated,pow,unproven" });
+    }
+    for (const r of judged.slice(4, 8)) {
+      assertEquals(r, { score: 65, keys: "correlated,no_events" });
+    }
+    assertEquals(judged[8], { score: 50, keys: "pow,unproven" });
+
+    // The same sweep again stamps nothing twice.
+    await sweep(db, min(14));
+    assertEquals(await rows(), judged);
+
+    // 90 minutes: everyone makes one clean gesture. 92: the next sweep.
+    for (const vid of [...ids, "loner".padEnd(16, "0")]) {
+      await insertEvent(db, {
+        event_type: "engage",
+        site_id: site,
+        session_id: `s-${vid}`,
+        visitor_id: vid,
+        created_at: new Date(min(90)).toISOString(),
+      });
+    }
+    await sweep(db, min(92));
+    const after = await rows();
+    assertEquals(after.slice(0, 8), judged.slice(0, 8));
+    // Not in any cluster: the late gesture still forgives it.
+    assertEquals(after[8], { score: 30, keys: "pow" });
+    await db.close();
+  },
+});
+
+Deno.test({
+  name:
+    "bot-correlator — a view over the threshold for its own reasons is still left alone",
+  async fn() {
+    cleanup();
+    const db = createTestDb();
+    const site = "corr-own-reasons-site";
+    const details = [
+      [70, '{"burst":25,"geo":30,"no_events":15}'], // 55 without the mark
+      [50, '{"pow":30,"unproven":20,"no_engagement":50}'],
+      [60, '{"pow":30,"unproven":20,"classifier":"velocity"}'],
+      [50, '{"pow":50}'],
+      [50, null],
+    ] as const;
+    for (let i = 0; i < 8; i++) {
+      const vid = `corrown${i}`.padEnd(16, "0");
+      const [bot_score, bot_score_detail] = details[i] ?? [0, null];
+      await insertView(db, {
+        visitor_id: vid,
+        site_id: site,
+        bot_score,
+        bot_score_detail,
+        created_at: new Date().toISOString(),
+      });
+      recordPrint(makePrint(`corr_own_ip_${i}`, vid, { siteId: site }));
+    }
+    await sweep(db);
+    const rows = await db.query<
+      { bot_score: number; bot_score_detail: string | null }
+    >(
+      "SELECT bot_score, bot_score_detail FROM visitor_views WHERE site_id = ? ORDER BY id",
+      site,
+    );
+    details.forEach(([bot_score, bot_score_detail], i) =>
+      assertEquals(rows[i], { bot_score, bot_score_detail })
+    );
+    for (const r of rows.slice(5)) assertEquals(r.bot_score, 50);
+    await db.close();
+  },
+});
+
+Deno.test("bot-correlator — the view penalty reaches rows through the visitor index", async () => {
+  const db = createTestDb();
+  const plan = (await db.query<{ detail: string }>(
+    `EXPLAIN QUERY PLAN ${viewPenaltySql(3)}`,
+    30,
+    "{}",
+    "{}",
+    "site",
+    "a",
+    "b",
+    "c",
+  )).map((r) => r.detail);
+  assertEquals(plan, [
+    "SEARCH visitor_views USING INDEX idx_vv_visitor (visitor_id=?)",
+  ]);
+  await db.close();
+});
+
+Deno.test("bot-correlator — the event penalty reaches rows through the visitor index", async () => {
+  const db = createTestDb();
+  const plan = (await db.query<{ detail: string }>(
+    `EXPLAIN QUERY PLAN ${eventPenaltySql(3)}`,
+    30,
+    "{}",
+    "{}",
+    "site",
+    "a",
+    "b",
+    "c",
+  )).map((r) => r.detail);
+  assertEquals(plan, [
+    "SEARCH semantic_events USING INDEX idx_se_visitor (visitor_id=?)",
+  ]);
+  await db.close();
+});
+
+Deno.test("bot-correlator — the event penalty touches only the cluster's clean events on its site", async () => {
+  const db = createTestDb();
+  const at = new Date().toISOString();
+  const rows: [string, string, number, string | null][] = [
+    ["v1", "site", 0, null], // penalised
+    ["v1", "site", 10, '{"burst":10}'], // penalised, detail kept
+    ["v1", "other", 0, null], // another site
+    ["v2", "site", 0, null], // another visitor
+    ["v1", "site", 60, null], // already a bot
+    ["v1", "site", 0, '{"correlated":{}}'], // already marked
+  ];
+  for (const [visitor_id, site_id, bot_score, bot_score_detail] of rows) {
+    await db.run(
+      `INSERT INTO semantic_events
+         (event_type, site_id, visitor_id, bot_score, bot_score_detail, created_at)
+       VALUES ('click', ?, ?, ?, ?, ?)`,
+      site_id,
+      visitor_id,
+      bot_score,
+      bot_score_detail,
+      at,
+    );
+  }
+  const res = await db.run(
+    eventPenaltySql(1),
+    30,
+    '{"correlated":{"penalty":30}}',
+    '{"penalty":30}',
+    "site",
+    "v1",
+  );
+  assertEquals(res.changes, 2);
+  const after = await db.query<{ bot_score: number; d: string | null }>(
+    "SELECT bot_score, bot_score_detail AS d FROM semantic_events ORDER BY id",
+  );
+  assertEquals(after.map((r) => r.bot_score), [30, 40, 0, 0, 60, 0]);
+  assertEquals(JSON.parse(after[0].d!), { correlated: { penalty: 30 } });
+  assertEquals(JSON.parse(after[1].d!), {
+    burst: 10,
+    correlated: { penalty: 30 },
+  });
+  await db.close();
 });

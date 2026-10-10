@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { flushRemainingEvents, handleEvents } from "@/lib/events-endpoint.ts";
 import { createTestDb, solvePow } from "./_helpers.ts";
 
@@ -275,5 +275,42 @@ Deno.test("handleEvents — sec-ch-ua-mobile ?1 → mobile", async () => {
 
   const resp = await handleEvents(req, db);
   assertEquals(resp.status, 204);
+  await db.close();
+});
+
+Deno.test("handleEvents — accepts the engage event", async () => {
+  const db = createTestDb();
+  const site = "engage-accept";
+  const sid = "0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a";
+  const tok = await solvePow(site, sid);
+  const body = JSON.stringify({
+    siteId: site,
+    tok,
+    events: [{ type: "engage", sessionId: sid, data: { ms: 1234, path: "/" } }],
+  });
+  await handleEvents(
+    new Request("https://a.example.com/e", {
+      method: "POST",
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0",
+        "accept-language": "en-US",
+        "sec-ch-ua": '"Chrome"',
+        "sec-fetch-site": "cross-site",
+        "content-type": "application/json",
+        "content-length": String(body.length),
+      },
+      body,
+    }),
+    db,
+  );
+  await flushRemainingEvents(db);
+  const row = await db.queryOne<{ event_type: string; data: string }>(
+    "SELECT event_type, data FROM semantic_events WHERE site_id = ?",
+    site,
+  );
+  assert(row, "engage event stored");
+  assertEquals(row.event_type, "engage");
+  assertEquals(JSON.parse(row.data).ms, 1234);
   await db.close();
 });

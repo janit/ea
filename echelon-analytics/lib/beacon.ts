@@ -3,9 +3,10 @@
 // Returns a 43-byte 1x1 transparent GIF and records the pageview.
 // Visitor identity managed via HttpOnly cookie (_ev).
 
+import { seenBefore } from "./beacon-dedup.ts";
 import type { DbAdapter } from "./db/adapter.ts";
 import type { ViewRecord } from "../types.ts";
-import { getClientIp } from "./ip.ts";
+import { getClientIp, hasUnresolvedClientAddr } from "./ip.ts";
 import {
   classifyDevice,
   classifyReferrer,
@@ -19,6 +20,7 @@ import {
   parseBrowser,
   parseOS,
   recordBurst,
+  recordSiteVisit,
 } from "./bot-score.ts";
 import {
   ALLOWED_SITES,
@@ -27,8 +29,13 @@ import {
   validateSiteId,
   VIEW_FLUSH_MS,
 } from "./config.ts";
-import { anonymizeView, shouldAnonymize } from "./anonymize.ts";
+import {
+  anonymizeView,
+  shouldAnonymize,
+  storedVisitorId,
+} from "./anonymize.ts";
 import { tokenPenalty, verifyToken } from "./challenge.ts";
+import { markProven, provenBy, provenKeys } from "./proven-sessions.ts";
 import { recordPrint } from "./bot-correlator.ts";
 import {
   isDatacenterIp,
@@ -42,6 +49,7 @@ import {
 } from "./buffered-writer.ts";
 import { isUtmCampaignActive, refreshUtmCampaigns } from "./utm.ts";
 import { debug } from "./debug.ts";
+import { getSiteHome, refreshSiteHomes } from "./site-home.ts";
 
 // 1x1 transparent GIF (43 bytes)
 export const PIXEL = new Uint8Array([
@@ -98,6 +106,7 @@ const GIF_HEADERS = {
 
 const COOKIE_RE = /^[0-9a-f]{16}$/;
 const SESSION_RE = /^[0-9a-f-]{36}$/;
+const NONCE_RE = /^[0-9a-f]{16}$/;
 
 import { getRequestCookie as getCookie } from "./cookie.ts";
 
@@ -262,6 +271,11 @@ export async function handleBeacon(
   // Parse session ID (UUID from sessionStorage)
   const sidRaw = url.searchParams.get("sid");
   const sessionId = sidRaw && SESSION_RE.test(sidRaw) ? sidRaw : null;
+  // The tracker solves its PoW over whatever session id it sent, including
+  // the non-UUID fallback it uses when sessionStorage is blocked. Verify
+  // against that string, as /e does; only storage and the proven-session key
+  // require a UUID.
+  const sidForPow = (sidRaw ?? "").slice(0, 64);
 
   // Site ID from data-site attribute
   const siteId = validateSiteId(url.searchParams.get("s") ?? "default");
@@ -301,6 +315,7 @@ export async function handleBeacon(
 
   // Refresh exclusion cache + UTM campaign cache
   await refreshExcluded(db);
+  await refreshSiteHomes(db);
   await refreshUtmCampaigns(db);
 
   // Drop excluded visitors at ingest, as the events endpoint already does.
@@ -337,11 +352,33 @@ export async function handleBeacon(
     utmCampaign = null;
   }
 
+  // Drop a redelivery of a beacon already recorded. The check sits before the
+  // block below so a dropped copy never reaches recordBurst, recordSiteVisit,
+  // markProven or recordPrint: each of those counts a request, and a retry of
+  // one pageview must not look like a second one. SPA navigations carry no
+  // interaction time (they would all share one key per path), and a beacon
+  // without a session id has nothing stable to key on; neither is deduped.
+  // The key is site|session|nonce, with no visitor id: in cookie mode a copy
+  // that arrives without the cookie is given a new random visitor id, and
+  // without cookies the id is a hash of the address, which a phone changes
+  // between a request and its retry. A beacon without a well-formed nonce is
+  // always counted.
+  const nonceRaw = url.searchParams.get("_n");
+  const nonce = nonceRaw !== null && NONCE_RE.test(nonceRaw) ? nonceRaw : null;
+  const isRedelivery = !isSpaNav && validInteraction && sessionId !== null &&
+    nonce !== null && path !== null && path.startsWith("/") &&
+    seenBefore(`${siteLower}|${sessionId}|${nonce}`);
+
   // Record if valid (excluded visitors already returned above)
-  if (validInteraction && path && path.startsWith("/")) {
+  if (validInteraction && path && path.startsWith("/") && !isRedelivery) {
     const ip = getClientIp(req);
     const ipHash = await hashIp(ip);
     const burstCount = recordBurst(ipHash);
+    // An unresolved or proxy-collapsed address stands for many people.
+    const crossSiteCount = hasUnresolvedClientAddr(req)
+      ? 0
+      : recordSiteVisit(ipHash, siteLower, ua);
+    const home = getSiteHome(siteId);
     const visitorCountry = getVisitorCountry(req);
 
     const cfSignals = extractCloudflareSignals(req);
@@ -358,6 +395,10 @@ export async function handleBeacon(
       path,
       visitorCountry,
       siteId,
+      userAgent: ua,
+      crossSiteCount,
+      homeCountry: home.country,
+      homeLanguage: home.language,
       crawlerFeedMatch: matchesCrawlerFeed(ua),
       aiCrawlerFeedMatch: matchesAiCrawlerFeed(ua),
       datacenterIp: isDatacenterIp(ip),
@@ -366,8 +407,22 @@ export async function handleBeacon(
 
     // PoW token verification
     const tok = url.searchParams.get("tok");
-    const tokenResult = await verifyToken(tok, siteId, sessionId ?? "");
-    const powPenalty = tokenPenalty(tokenResult);
+    const tokenResult = await verifyToken(tok, siteId, sidForPow);
+    // A valid token vouches for this session and visitor for an hour. A later
+    // request from either that arrives tokenless (solve lost the race) or
+    // with a stale token (long-lived tab) is not penalised for it: the
+    // waived amount is recorded as pow_ok so it stays visible.
+    const proofKeys = provenKeys(siteId, sessionId, visitorId);
+    if (tokenResult === "valid") markProven(proofKeys);
+    let powPenalty = tokenPenalty(tokenResult, "beacon");
+    // pow_ok_by records which key granted the waiver: "s" (this session
+    // proved work) or "v" (only the visitor did).
+    const waivedBy = powPenalty > 0 ? provenBy(proofKeys) : null;
+    if (waivedBy) {
+      scoreResult.detail.pow_ok = powPenalty;
+      scoreResult.detail.pow_ok_by = waivedBy;
+      powPenalty = 0;
+    }
     if (powPenalty > 0) {
       scoreResult.detail.pow = powPenalty;
       scoreResult.detail.pow_result = tokenResult;
@@ -403,7 +458,7 @@ export async function handleBeacon(
     // Feed the bot correlator — ephemeral fingerprint for async clustering
     recordPrint({
       ipHash,
-      visitorId,
+      visitorId: await storedVisitorId(siteId, visitorId),
       siteId,
       fingerprint: {
         osName: osName ?? "unknown",

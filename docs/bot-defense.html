@@ -96,10 +96,64 @@
 <tr><td>Missing Sec-CH-UA + Sec-Fetch-Site</td><td>Both headers absent</td><td>+10</td></tr>
 <tr><td>Unrealistic screen</td><td>Width/height &le; 0 or &gt; 10000</td><td>+10</td></tr>
 <tr><td>No referrer + deep path</td><td>Direct visit to path with &ge; 2 segments</td><td>+5</td></tr>
+<tr><td>Crawler feed</td><td>User-Agent matches monperrus/crawler-user-agents</td><td>+30</td></tr>
+<tr><td>AI crawler feed</td><td>User-Agent matches ai-robots-txt/robots.json</td><td>+40</td></tr>
+<tr><td>Datacenter IP</td><td>Address in a published AWS, GCP, DigitalOcean or Oracle Cloud range (IPv4 and IPv6)</td><td>+24</td></tr>
+<tr><td>Windows tablet mismatch</td><td>Windows UA with a 768&ndash;1024 px wide screen</td><td>+34</td></tr>
+<tr><td>Linux desktop</td><td>Linux UA that is not Android (pageviews only; not scored on <code>/e</code>)</td><td>+10</td></tr>
+<tr><td>Cross-site</td><td>One IP and browser on 3+ of this instance&rsquo;s sites within an hour</td><td>+34</td></tr>
+<tr><td>Country mismatch</td><td>Visitor country implausible for the site&rsquo;s home (needs a home country)</td><td>+15</td></tr>
+<tr><td>Cross-continent</td><td>Visitor on another continent than the site&rsquo;s home (needs a home country)</td><td>+8</td></tr>
+<tr><td>Windows tablet, foreign</td><td>Windows tablet mismatch from a common-everywhere country that is not the site&rsquo;s home</td><td>+15</td></tr>
+<tr><td>Linux desktop, foreign</td><td>Linux desktop with a country mismatch from a common-everywhere country</td><td>+30</td></tr>
+<tr><td>Old Android, foreign</td><td>Android 6 or older with a country mismatch from a common-everywhere country</td><td>+40</td></tr>
 <tr><td>PoW token missing</td><td>No proof-of-work token sent</td><td>+30</td></tr>
-<tr><td>PoW token invalid</td><td>Token fails verification or replayed</td><td>+40</td></tr>
+<tr><td>PoW token invalid (pageview)</td><td>Token fails verification on <code>/b.gif</code></td><td>+50</td></tr>
+<tr><td>PoW token invalid (events)</td><td>Token fails verification on <code>/e</code></td><td>+40</td></tr>
+<tr><td>PoW waived</td><td>Session or visitor already presented a valid token in the last hour (shown as <code>pow_ok</code>; <code>pow_ok_by</code> says whether the session or the visitor key granted it)</td><td>0</td></tr>
+<tr><td>No interaction</td><td>No click, key press, tap or form use 5&ndash;30 minutes after the view</td><td>+15</td></tr>
+<tr><td>No interaction, and a PoW penalty or a waiver by visitor key only</td><td>Carries any PoW penalty (missing or invalid token), or a waiver granted by the visitor key alone, and never interacted</td><td>raised to 50</td></tr>
+<tr><td>No engagement (strict mode)</td><td>Session never interacted, 30&ndash;180 minutes after the view; only with <code>ECHELON_REQUIRE_ENGAGEMENT=true</code></td><td>raised to 50</td></tr>
 </table>
 <p>Score is capped at 100.</p>
+<p>Every weight in this table can be changed with <code>ECHELON_BOT_SCORE_WEIGHTS</code> (<code>key:points,key:points</code>, 0&ndash;100 each; 0 turns the signal off). See <a href="configuration.html">Configuration</a> for the keys. The datacenter lists refresh every six hours; a provider whose refresh fails, is empty or shrinks to under 10% of its previous size keeps its old ranges.</p>
+<p>The Windows tablet, cross-site and datacenter weights are 34, 34 and 24 rather than round numbers on purpose: a real visitor can carry any one of them, and one who then reads without clicking gets the +15 for no interaction. The sums stay under the threshold of 50. Linux desktop is scored on pageviews only, not on the events endpoint, where an invalid token is already +40.</p>
+
+<h2>Home Audience</h2>
+<p>Each site can declare a home country and language under <strong>Settings &rarr; Home Audience</strong> (or <code>PATCH /api/sites/:id</code>). The geography signals are measured against it and do nothing until it is set; they also need a visitor country, which comes from <code>ECHELON_BEHIND_CLOUDFLARE</code> or <code>ECHELON_TRUST_GEO_HEADERS</code>. Visitors from the same continent are never a mismatch, and a country the continent table does not know is never foreign. On English-language sites (or with no language set), visitors from countries that appear everywhere (US, CA, AU, NZ, JP, KR, SG, IN, TR, RU, MA, AE, MX, PK) are exempt from the country mismatch. Leave it empty for a worldwide audience.</p>
+<p>The home country must be an assigned code that Echelon can place on a continent, or <code>RU</code>. Anything else (<code>UK</code> for <code>GB</code>, <code>EN</code>, <code>XX</code>) is refused with a 400, and a code of that kind already stored is treated as not set. Russia spans two continents and has none in the table, so with a home of <code>RU</code> no visitor shares its continent: every visitor from another country is a mismatch, neighbours included (the exemption above for countries that appear everywhere still holds).</p>
+<p>Opting in has a cost for real visitors:</p>
+<ul>
+  <li><strong>Non-English sites.</strong> A Linux desktop or an Android 6 or older visitor from one of those countries scores 63 from these signals alone, over the threshold of 50, and is not counted. Other foreign visitors carry 15 to 23 points.</li>
+  <li><strong>Windows scaled displays.</strong> The tracker reports <code>screen.width</code> in CSS pixels, so a real Windows laptop with display scaling can land in the 768&ndash;1024 band (for example 1280 wide at 125%, or 1366 at 150%) and carry +34. Lower <code>win_tablet_mismatch</code> or set it to 0 if your audience uses such displays.</li>
+  <li><strong>Sibling sites.</strong> Cross-site counts an address and browser on three or more of your sites within an hour. A person who browses sites you run together will trip it. Browsers now send nearly identical user agents, so people who share one address (an office, a campus, a mobile carrier) pool into one count as well. Set <code>cross_site:0</code> on an instance whose sites share an audience. It is scored on the pageview beacon only, and never when the client address cannot be resolved (no peer address, or a forwarded header arriving without <code>ECHELON_TRUST_PROXY</code>).</li>
+</ul>
+
+<h2>Session Classifier</h2>
+<p>Some bots are only visible across requests. Every 15 minutes Echelon reviews the last 30 minutes, judging a visitor or session once its oldest view in that window is 12 minutes old:</p>
+<ul>
+  <li><strong>Session velocity</strong> &mdash; six or more page visits, to six or more different pages, averaging three seconds apart or less. Pages are told apart by pathname, and consecutive views of one page count once: views that differ only in query string or fragment (pagination, a carousel, a map that keeps its state in the URL) are one page.</li>
+  <li><strong>OS rotation</strong> &mdash; three or more names of one operating-system vendor family on one session or visitor.</li>
+  <li><strong>OS family flip</strong> &mdash; one session or visitor on two operating-system vendors (Apple, Android, Windows).</li>
+  <li><strong>Burst cohort</strong> &mdash; forty or more single-page sessions with the same country and screen size, from a different continent than the site&rsquo;s home country (needs a home country; does nothing when either country has no known continent).</li>
+</ul>
+<p>The first run is two minutes after start. Flagged rows are scored 60 and the visitor is excluded automatically as <code>auto:&lt;reason&gt;</code> for 30 days; removing the exclusion on the admin bots page reverses a wrong one, and excluding such a visitor by hand replaces the <code>auto:</code> label, which makes the exclusion permanent. Validated visitors are spared by session velocity and OS rotation, but <strong>not</strong> by OS family flip and burst cohort, whose patterns cannot be one real person. As a side effect, browser DevTools device emulation or a user-agent switcher in one tab can trip OS family flip on yourself. On anonymized sites, findings keyed on the session are skipped.</p>
+
+<h2>Duplicate Beacons</h2>
+<p>Mobile networks and service workers sometimes deliver the same pageview request more than once. A beacon with the same site, session and per-pageview nonce as one recorded in the last ten minutes is answered normally but counted only once. The tracker draws a random nonce for each landing pageview, so a reload or new page load is counted. A beacon without a well-formed nonce is always counted, and SPA navigation beacons and beacons without a session id are exempt.</p>
+
+<h2>Validated Visitors</h2>
+<p>A bot score measures suspicion. <strong>Validated</strong> measures proof: the session did something only a person does. The tracker reports the first click, key press or tap on each page as an <code>engage</code> event. A background validator (every minute) marks a view validated once its session has an interaction event and stayed on the page for at least two seconds, or showed a later interaction plus two distinct interaction types.</p>
+<ul>
+  <li><strong>Interaction events</strong> prove a gesture: <code>engage</code>, <code>click</code>, <code>ad_click</code>, <code>form_focus</code>, <code>form_blur</code>, <code>form_submit</code>, <code>hover</code>, <code>outbound</code>, <code>download</code>.</li>
+  <li><strong>Passive events</strong> never do: <code>bounce</code>, <code>session_end</code>, <code>session_resume</code>, <code>scroll_depth</code>, <code>web_vital</code>, <code>custom</code>. A headless page load emits all of these.</li>
+  <li><strong>Retroactive penalties skip validated visitors.</strong> The fingerprint correlator waits twelve minutes before judging a visitor and never penalises one who has been validated from a non-datacenter IP. Validated views are also exempt from the engagement gate.</li>
+  <li><strong>The engagement gate</strong> judges the other views. A view with no interaction 5&ndash;30 minutes after it happened gets +15; if it also carries a PoW penalty, or its PoW was waived only by the visitor key (<code>pow_ok_by: "v"</code>), it is raised to the threshold instead. A session that interacted at any time is shielded as a whole. This is why a missing token costs only +30 at ingest: a browser without WebAssembly looks like a bot, but one that also never interacts does not stay forgiven.</li>
+  <li><strong>A later gesture undoes the gate.</strong> Someone who reads with a mouse wheel or trackpad may not click or press a key until after their view was judged. Each sweep first looks back 180 minutes: if the session has interacted since, exactly the points the gate added (stored in the <code>no_events</code> or <code>unproven</code> mark) are taken off again and the view can be validated. A view that the correlator or strict mode has judged in the meantime is left as it is.</li>
+  <li><strong>Strict mode is optional.</strong> With <code>ECHELON_REQUIRE_ENGAGEMENT=true</code>, views and events of sessions that never interact are raised to the bot threshold 30&ndash;180 minutes after they were written and stop counting as human. This is not undone by a later gesture. It is off by default: people who read and leave are real visitors.</li>
+  <li><strong>Anonymized sites are judged by visitor id.</strong> Session ids on sites in <code>ECHELON_ANONYMIZE_SITES</code> are one of 50 names that unrelated visits share, so on those sites the validator and the gate ignore them: an interaction counts for a view or event only if it has the same anonymized visitor id and happened within 30 minutes of it.</li>
+</ul>
+<p>The overview API returns <code>validated_visitors</code> and the dashboard shows it next to unique visitors.</p>
 
 <h2>Proof-of-Work System</h2>
 <p>Every request for <code>/ea.js</code> embeds a WebAssembly blob and a challenge string. The browser must solve the challenge before sending beacons.</p>
@@ -108,22 +162,30 @@
 <p>Most analytics spam comes from scripts that fire HTTP requests directly &mdash; <code>curl</code>, <code>python-requests</code>, headless browsers running thousands of sessions. Proof-of-work stops them because:</p>
 <ul>
   <li><strong>Requires a real WASM runtime.</strong> The challenge can only be solved by executing a WebAssembly module. Simple HTTP clients can&rsquo;t do this &mdash; they&rsquo;d need to embed a full WASM engine, which eliminates the vast majority of bot scripts.</li>
-  <li><strong>Costs CPU time per request.</strong> Even if a bot does run the WASM, every beacon requires a fresh solve. At scale, this makes spamming your analytics economically impractical &mdash; real browsers solve one challenge and cache it, but a bot farm generating thousands of fake pageviews pays the CPU cost on every single one.</li>
-  <li><strong>Rotates unpredictably.</strong> The WASM module itself is regenerated from a random seed every 6 hours, and the challenge string changes every minute. Bots can&rsquo;t precompute answers or hardcode solutions &mdash; they&rsquo;d need to re-fetch and re-solve constantly.</li>
-  <li><strong>Binds to session context.</strong> The solve includes the session ID and site ID, so a valid token from one session can&rsquo;t be replayed in another. This prevents token-harvesting attacks where a bot solves once and reuses the result.</li>
+  <li><strong>Costs CPU time per identity.</strong> A bot that does run the WASM has to solve at least once for every identity it presents. A session or visitor that has presented a valid token is not penalised for a missing or stale one for the next 60 minutes, so a real browser solves once and is never slowed down again &mdash; while a bot farm that rotates IPs and user agents to look like many visitors pays the CPU cost for each of them, and every other signal still applies to all of its requests.</li>
+  <li><strong>Rotates unpredictably.</strong> The WASM module is regenerated every 6 hours from a seed derived from your instance secret, and the challenge string changes every minute. Bots can&rsquo;t precompute answers or hardcode solutions &mdash; they&rsquo;d need to re-fetch and re-solve constantly.</li>
+  <li><strong>Binds to session and site.</strong> The solve includes the session ID and site ID, so a token solved for one session or site does not verify for another. On the site it was solved for, that proof then vouches for the session and visitor for 60 minutes (the <em>PoW waived</em> row above); it never carries over to another site.</li>
   <li><strong>Invisible to real users.</strong> Unlike CAPTCHAs, the PoW runs in the background in under 150ms. Visitors never see it, never interact with it, and never get blocked by it. The cost falls entirely on automation.</li>
 </ul>
 
 <h3>How It Works</h3>
 <ul>
-  <li>A WASM module is generated from a 64-byte random seed every <strong>6 hours</strong></li>
+  <li>A WASM module is generated every <strong>6 hours</strong> from a 64-byte seed derived from <code>ECHELON_SECRET</code> (random per process if no secret is set)</li>
   <li>Implements a SipHash-inspired algorithm with randomized constants</li>
   <li>Challenge string rotates every <strong>minute</strong> (HMAC-SHA256 of minute bucket)</li>
   <li>Client computes: <code>token = wasm.solve(challenge + ":" + sessionId + ":" + siteId)</code></li>
   <li>Token is a 32-character hex string</li>
-  <li>Cached in <code>sessionStorage</code>, re-solved on 10% of requests</li>
+  <li>The tracker fetches a fresh challenge from <code>/c</code> and re-solves once its token is 4 minutes old, so long-lived tabs stay valid</li>
+  <li>Cached in <code>sessionStorage</code> and reused while the challenge matches; about one page load in ten ignores the cached token and solves again</li>
   <li>WASM solve is awaited up to 150ms before sending the beacon</li>
 </ul>
+
+<h3>Content Security Policy on Your Site</h3>
+<p>If your site sends a <code>Content-Security-Policy</code> header, it must let the tracker reach your Echelon host: the host in <code>script-src</code> (to load <code>/ea.js</code>), in <code>img-src</code> (the <code>/b.gif</code> pixel) and in <code>connect-src</code> (for <code>/c</code> and <code>/e</code>), plus <code>'wasm-unsafe-eval'</code> in <code>script-src</code> so the proof-of-work module can run:</p>
+<pre>script-src 'self' https://your-host 'wasm-unsafe-eval';
+connect-src 'self' https://your-host;
+img-src 'self' https://your-host</pre>
+<p>Without <code>'wasm-unsafe-eval'</code> the tracker still works but sends no token, so its requests carry the +30 missing-token penalty instead of being discarded at ingest. A view with no token and no interaction is later raised to the bot threshold by the engagement gate (see <a href="bot-defense.html">Bot Defense</a>).</p>
 
 <h3>Server Verification</h3>
 <p>The server tries all combinations of:</p>
@@ -141,7 +203,7 @@
 </ul>
 
 <h2>Rate Limiting</h2>
-<p>Tracking endpoints (<code>/b.gif</code>, <code>/e</code>) are rate-limited per IP:</p>
+<p>Tracking endpoints (<code>/b.gif</code>, <code>/e</code>) and the challenge endpoint (<code>/c</code>, the current PoW challenge the tracker uses to refresh its token; public and CORS-enabled) are rate-limited per IP:</p>
 <ul>
   <li>Default: 100 requests per 60-second window</li>
   <li>Configurable via <code>ECHELON_RATE_LIMIT_MAX</code> and <code>ECHELON_RATE_LIMIT_WINDOW_MS</code></li>
@@ -169,7 +231,7 @@
 </table>
 
 <h2>Manual Exclusion</h2>
-<p>Via the admin dashboard or API, you can manually exclude specific visitor IDs from rollups:</p>
+<p>Via the admin dashboard or API, you can manually exclude specific visitor IDs from rollups. The session classifier adds its own exclusions labelled <code>auto:&lt;reason&gt;</code>, which daily maintenance removes after 30 days; manual ones are never removed automatically.</p>
 <pre># Exclude
 POST /api/bots/exclude
 { "visitor_id": "abc123", "label": "Known bot" }
@@ -178,7 +240,7 @@ POST /api/bots/exclude
 DELETE /api/bots/exclude/abc123</pre>
 
 <h2>Discard Threshold</h2>
-<p>Set <code>ECHELON_BOT_DISCARD_THRESHOLD</code> to a score (e.g., <code>80</code>) to discard high-score requests before they're even stored. Default is <code>0</code> (store all, filter at rollup time).</p>
+<p>Requests scoring at or over <code>ECHELON_BOT_DISCARD_THRESHOLD</code> are discarded before they are stored. The default is <code>50</code>, the bot threshold. Set it higher (e.g., <code>80</code>) to store the rows in between, or to <code>0</code> to store everything. Stored rows scoring 50 or more are still left out of all statistics; they stay visible, with their score detail, on the admin bots pages. A discarded request cannot be recovered, so <code>0</code> is the setting to audit new signals with (see <a href="installation.html#upgrading">Upgrading</a>).</p>
 
 <hr>
 <div class="doc-nav">

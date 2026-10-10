@@ -96,7 +96,7 @@ crawler user-agents and cloud provider IP ranges. This system:
 - Does not store your IP address — hashes are held in memory temporarily (up to
   1 hour) and are lost on server restart
 - Compares your IP against known cloud provider address ranges (AWS, Google
-  Cloud) to identify datacenter traffic
+  Cloud, DigitalOcean, Oracle Cloud) to identify datacenter traffic
 - Does not affect legitimate users — it only filters automated traffic
 
 ### 2. Visitor Identity

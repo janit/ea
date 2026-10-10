@@ -21,7 +21,12 @@
 
 import type { DbAdapter } from "./db/adapter.ts";
 import { recordConfirmedBotIp } from "./bot-score.ts";
-import { CLEAN_SQL, cleanSql } from "./bot-threshold.ts";
+import { CLEAN_SQL } from "./bot-threshold.ts";
+import {
+  applyEngagementGate,
+  GATE_RAISED_ONLY_SQL,
+} from "./engagement-gate.ts";
+import { provenHumanIds } from "./proven-human.ts";
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -37,16 +42,19 @@ const CLUSTER_THRESHOLD = 6; // ≥ 6 distinct IPs = flag
 const CLUSTER_THRESHOLD_TAINTED = 4; // ≥ 4 when any IP is confirmed bot
 const LARGE_CLUSTER = 8; // ≥ 8 = high-confidence bot farm
 
+// A visitor is only penalised once their first request in the window is this
+// old. A cluster is detected from everyone's prints, but a person who landed
+// minutes ago has not had the chance to be validated: validation usually
+// rests on the session_end sent when the tab is hidden, and the validator
+// looks back 15 minutes for it. Penalising them first would put their score
+// over the threshold, which the validator then refuses to validate. Twelve
+// minutes is as long as the wait can be: prints live for PRINT_TTL_MS (20)
+// and sweeps run every 2, so a later sweep still picks them up.
+const SETTLE_MS = 12 * 60 * 1000;
+
 // Score penalties applied retroactively
 const PENALTY_NORMAL = 30; // Moderate cluster
 const PENALTY_LARGE = 50; // Large cluster or headless-confirmed
-
-// No-event bounce detection: visits with zero semantic_events after a
-// settling window are likely bots. Real users trigger scroll_depth,
-// hover, click, or web_vital events within seconds of page load.
-const NO_EVENTS_MIN_AGE_MS = 5 * 60 * 1000; // Wait 5 min before judging
-const NO_EVENTS_MAX_AGE_MS = 30 * 60 * 1000; // Only check recent visits
-const NO_EVENTS_PENALTY = 15; // Moderate — won't cross 50 alone
 
 // ── Ephemeral request print store ───────────────────────────────────────────
 
@@ -107,6 +115,60 @@ export function recordPrint(print: RequestPrint): void {
   prints.push(print);
 }
 
+// ── Retroactive view penalty ────────────────────────────────────────────────
+
+/**
+ * The UPDATE that penalises the views of `count` visitors. Parameters: the
+ * penalty, the detail for a row that has none, the `correlated` object, the
+ * site id, then the visitor ids.
+ *
+ * It reaches clean views, and views that only the engagement gate's
+ * provisional marks hold over the threshold. The gate judges a view at 5
+ * minutes and this job waits SETTLE_MS, so a cluster member that sent no
+ * token is always raised before it gets here. Skipping it would leave it
+ * without the `correlated` mark, and the gate would forgive it on its first
+ * late gesture. The penalty goes on top of the score as it stands and the
+ * gate's marks stay, so the detail still accounts for the score.
+ *
+ * The index is named because the second kind of row is not in the clean
+ * partial index: left to itself SQLite then reads every view of the site.
+ */
+function viewPenaltySql(count: number): string {
+  const placeholders = Array(count).fill("?").join(",");
+  return `UPDATE visitor_views INDEXED BY idx_vv_visitor
+             SET bot_score = MIN(bot_score + ?, 100),
+                 bot_score_detail = CASE
+                   WHEN bot_score_detail IS NULL THEN ?
+                   ELSE json_set(bot_score_detail, '$.correlated', json(?))
+                 END
+             WHERE site_id = ?
+               AND visitor_id IN (${placeholders})
+               AND (${CLEAN_SQL} OR ${GATE_RAISED_ONLY_SQL})
+               AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"correlated"%')`;
+}
+
+/**
+ * The same for the events of `count` visitors; same parameters. Clean events
+ * only: the gate's provisional marks are put on views, not on events.
+ *
+ * The index is named here too: `site_id = ?` matches the leading column of
+ * the site indexes, and left to itself SQLite takes one of those and reads
+ * every event of the site for each chunk.
+ */
+function eventPenaltySql(count: number): string {
+  const placeholders = Array(count).fill("?").join(",");
+  return `UPDATE semantic_events INDEXED BY idx_se_visitor
+             SET bot_score = MIN(bot_score + ?, 100),
+                 bot_score_detail = CASE
+                   WHEN bot_score_detail IS NULL THEN ?
+                   ELSE json_set(bot_score_detail, '$.correlated', json(?))
+                 END
+             WHERE site_id = ?
+               AND visitor_id IN (${placeholders})
+               AND ${CLEAN_SQL}
+               AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"correlated"%')`;
+}
+
 // ── Sweep logic ─────────────────────────────────────────────────────────────
 
 interface ClusterMatch {
@@ -114,14 +176,16 @@ interface ClusterMatch {
   fpKeyStr: string;
   fingerprint: Fingerprint;
   ipHashes: Set<string>;
-  visitorIds: Set<string>;
+  /** visitor id → when first seen, and the IP hashes seen with it. */
+  visitors: Map<string, { firstSeen: number; ipHashes: Set<string> }>;
   hasTainted: boolean;
 }
 
-/** Run one correlation sweep. Finds clusters and updates the DB. */
-async function sweep(db: DbAdapter): Promise<void> {
-  const now = Date.now();
-
+/**
+ * Run one correlation sweep. Finds clusters and updates the DB. `now` is for
+ * tests that need two sweeps a known time apart.
+ */
+async function sweep(db: DbAdapter, now: number = Date.now()): Promise<void> {
   // Prune expired prints
   let pruneIdx = 0;
   while (
@@ -131,9 +195,14 @@ async function sweep(db: DbAdapter): Promise<void> {
   }
   if (pruneIdx > 0) prints.splice(0, pruneIdx);
 
-  // No-event bounce detection runs independently of live prints — quiet
-  // periods are exactly when hit-and-leave bots need to be caught.
-  await penalizeNoEventBounces(db);
+  // The engagement gate runs independently of live prints — quiet periods
+  // are exactly when hit-and-leave bots need to be caught. It is a separate
+  // job that shares this timer: if it fails, clustering still runs.
+  try {
+    await applyEngagementGate(db, { now });
+  } catch (e) {
+    console.error("[echelon] bot-correlator: engagement gate failed", e);
+  }
 
   if (prints.length === 0) return;
 
@@ -151,13 +220,19 @@ async function sweep(db: DbAdapter): Promise<void> {
         fpKeyStr: fk,
         fingerprint: p.fingerprint,
         ipHashes: new Set(),
-        visitorIds: new Set(),
+        visitors: new Map(),
         hasTainted: false,
       };
       groups.set(groupKey, group);
     }
     group.ipHashes.add(p.ipHash);
-    group.visitorIds.add(p.visitorId);
+    let seen = group.visitors.get(p.visitorId);
+    if (!seen) {
+      seen = { firstSeen: p.timestamp, ipHashes: new Set() };
+      group.visitors.set(p.visitorId, seen);
+    }
+    seen.firstSeen = Math.min(seen.firstSeen, p.timestamp);
+    seen.ipHashes.add(p.ipHash);
     if (p.headlessTainted) group.hasTainted = true;
   }
 
@@ -181,7 +256,19 @@ async function sweep(db: DbAdapter): Promise<void> {
         ? PENALTY_LARGE
         : PENALTY_NORMAL;
 
-    const visitorIds = [...cluster.visitorIds];
+    // Who in this cluster may be penalised: seen long enough ago to have had
+    // the chance to prove themselves, and not proven human.
+    const settled = [...cluster.visitors]
+      .filter(([, v]) => now - v.firstSeen >= SETTLE_MS)
+      .map(([id]) => id);
+    const proven = await provenHumanIds(
+      db,
+      cluster.siteId,
+      "visitor_id",
+      settled,
+    );
+    const visitorIds = settled.filter((id) => !proven.has(id));
+    if (visitorIds.length === 0) continue;
     const detail = JSON.stringify({
       reason: "correlated",
       penalty,
@@ -202,19 +289,9 @@ async function sweep(db: DbAdapter): Promise<void> {
         let changes = 0;
         for (let i = 0; i < visitorIds.length; i += UPDATE_CHUNK_SIZE) {
           const chunk = visitorIds.slice(i, i + UPDATE_CHUNK_SIZE);
-          const placeholders = chunk.map(() => "?").join(",");
 
           const viewResult = await tx.run(
-            `UPDATE visitor_views
-             SET bot_score = MIN(bot_score + ?, 100),
-                 bot_score_detail = CASE
-                   WHEN bot_score_detail IS NULL THEN ?
-                   ELSE json_set(bot_score_detail, '$.correlated', json(?))
-                 END
-             WHERE site_id = ?
-               AND visitor_id IN (${placeholders})
-               AND ${CLEAN_SQL}
-               AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"correlated"%')`,
+            viewPenaltySql(chunk.length),
             penalty,
             `{"correlated":${detail}}`,
             detail,
@@ -223,16 +300,7 @@ async function sweep(db: DbAdapter): Promise<void> {
           );
 
           const eventResult = await tx.run(
-            `UPDATE semantic_events
-             SET bot_score = MIN(bot_score + ?, 100),
-                 bot_score_detail = CASE
-                   WHEN bot_score_detail IS NULL THEN ?
-                   ELSE json_set(bot_score_detail, '$.correlated', json(?))
-                 END
-             WHERE site_id = ?
-               AND visitor_id IN (${placeholders})
-               AND ${CLEAN_SQL}
-               AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"correlated"%')`,
+            eventPenaltySql(chunk.length),
             penalty,
             `{"correlated":${detail}}`,
             detail,
@@ -258,14 +326,16 @@ async function sweep(db: DbAdapter): Promise<void> {
     // Only after the DB has been successfully updated do we record the
     // IPs as confirmed bots in the fast-path map. This keeps in-memory
     // state and DB rows in sync across restarts.
-    for (const ipHash of cluster.ipHashes) {
-      recordConfirmedBotIp(ipHash);
+    for (const id of visitorIds) {
+      for (const ipHash of cluster.visitors.get(id)!.ipHashes) {
+        recordConfirmedBotIp(ipHash);
+      }
     }
 
     if (totalUpdated > 0) {
       console.log(
         `[echelon] bot-correlator: flagged cluster on ${cluster.siteId} ` +
-          `(${cluster.ipHashes.size} IPs, ${cluster.visitorIds.size} visitors, ` +
+          `(${cluster.ipHashes.size} IPs, ${visitorIds.length} of ${cluster.visitors.size} visitors, ` +
           `fp=${cluster.fingerprint.osName}/${cluster.fingerprint.browserName} ` +
           `${cluster.fingerprint.browserVersion}/${cluster.fingerprint.screenWidth}x` +
           `${cluster.fingerprint.screenHeight}/${cluster.fingerprint.countryCode}, ` +
@@ -273,59 +343,6 @@ async function sweep(db: DbAdapter): Promise<void> {
           `updated=${totalUpdated} records)`,
       );
     }
-  }
-}
-
-/**
- * Find visitor_views that are 5–30 minutes old with zero semantic_events
- * and apply a moderate bot score penalty. Idempotent via the
- * bot_score_detail "no_events" marker.
- */
-async function penalizeNoEventBounces(db: DbAdapter): Promise<void> {
-  const now = new Date();
-  // Window of views eligible for judging: old enough to have settled (≥ 5 min)
-  // but still recent (≤ 30 min). windowStart is the older bound (now − 30 min),
-  // windowEnd the newer bound (now − 5 min).
-  const windowStart = new Date(now.getTime() - NO_EVENTS_MAX_AGE_MS)
-    .toISOString();
-  const windowEnd = new Date(now.getTime() - NO_EVENTS_MIN_AGE_MS)
-    .toISOString();
-
-  const result = await db.run(
-    `UPDATE visitor_views
-     SET bot_score = MIN(bot_score + ?, 100),
-         bot_score_detail = CASE
-           WHEN bot_score_detail IS NULL THEN '{"no_events":true}'
-           ELSE json_set(bot_score_detail, '$.no_events', json('true'))
-         END
-     WHERE created_at >= ? AND created_at <= ?
-       AND ${CLEAN_SQL}
-       AND (bot_score_detail IS NULL OR bot_score_detail NOT LIKE '%"no_events"%')
-       AND NOT EXISTS (
-         SELECT 1 FROM semantic_events se
-         WHERE se.visitor_id = visitor_views.visitor_id
-           AND se.site_id = visitor_views.site_id
-           -- Scope to THIS view, not "has this visitor ever done anything".
-           -- Unscoped, a single event shielded every other view by the same
-           -- visitor — for the 30-day lifetime of the _ev cookie — and an
-           -- event the scorer itself rated as a bot counted as proof of a
-           -- human. strftime (not datetime) keeps the ISO format that
-           -- created_at uses; datetime() yields a space separator that sorts
-           -- before 'T', making the comparison silently always false.
-           AND se.created_at >= visitor_views.created_at
-           AND se.created_at <=
-             strftime('%Y-%m-%dT%H:%M:%fZ', visitor_views.created_at, '+5 minutes')
-           AND ${cleanSql("se.bot_score")}
-       )`,
-    NO_EVENTS_PENALTY,
-    windowStart,
-    windowEnd,
-  );
-
-  if (result.changes > 0) {
-    console.log(
-      `[echelon] bot-correlator: no-event bounce penalty (+${NO_EVENTS_PENALTY}) applied to ${result.changes} views`,
-    );
   }
 }
 
@@ -359,5 +376,13 @@ export function stopBotCorrelator(): void {
 }
 
 // ── Exported for testing ────────────────────────────────────────────────────
-export { sweep as _sweep };
+export {
+  eventPenaltySql as _eventPenaltySql,
+  sweep as _sweep,
+  viewPenaltySql as _viewPenaltySql,
+};
+/** Test-only: the current request prints. */
+export function _peekPrints(): readonly RequestPrint[] {
+  return prints;
+}
 export type { Fingerprint, RequestPrint };

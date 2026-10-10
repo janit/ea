@@ -15,6 +15,11 @@ import {
 } from "./lib/events-endpoint.ts";
 import { scheduleDailyMaintenance } from "./lib/maintenance.ts";
 import { startBotCorrelator, stopBotCorrelator } from "./lib/bot-correlator.ts";
+import { startViewValidator, stopViewValidator } from "./lib/view-validator.ts";
+import {
+  startSessionClassifier,
+  stopSessionClassifier,
+} from "./lib/session-classifier.ts";
 import { startThreatFeeds, stopThreatFeeds } from "./lib/threat-feeds.ts";
 import { recordRequest } from "./lib/request-stats.ts";
 import { pruneSessions } from "./lib/session.ts";
@@ -44,6 +49,12 @@ scheduleDailyMaintenance(db);
 // Start background bot correlator (async fingerprint clustering)
 startBotCorrelator(db);
 
+// Start the view validator (marks views whose session demonstrably interacted)
+startViewValidator(db);
+
+// Start the session classifier (cross-request bot patterns, every 15 min)
+startSessionClassifier(db);
+
 // Start threat intelligence feeds (async refresh every 6h)
 startThreatFeeds();
 
@@ -57,6 +68,8 @@ function gracefulShutdown(signal: string) {
   _shuttingDown = true;
   console.log(`[echelon] ${signal} received — flushing writers...`);
   stopBotCorrelator();
+  stopViewValidator();
+  stopSessionClassifier();
   stopThreatFeeds();
 
   // Hard timeout: force exit to avoid hanging

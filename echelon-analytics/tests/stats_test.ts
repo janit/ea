@@ -508,3 +508,23 @@ Deno.test("getOverview — excluded visitors are filtered from raw figures", asy
   assertEquals(result.countries[0].visitors, 1);
   await db.close();
 });
+
+Deno.test("getOverview — validated_visitors counts distinct clean, validated visitors", async () => {
+  const db = createTestDb();
+  const site = "overview-validated";
+  await insertView(db, { visitor_id: "val-a", site_id: site, validated: 1 });
+  await insertView(db, { visitor_id: "val-a", site_id: site, validated: 1 });
+  await insertView(db, { visitor_id: "val-b", site_id: site, validated: 1 });
+  await insertView(db, { visitor_id: "plain", site_id: site, validated: 0 });
+  // Validated earlier, later scored a bot by the classifier: not counted.
+  await insertView(db, {
+    visitor_id: "turned",
+    site_id: site,
+    validated: 1,
+    bot_score: 60,
+  });
+  const data = await getOverview(db, site, 7);
+  assertEquals(data.validated_visitors, 2);
+  assertEquals(data.unique_visitors, 3);
+  await db.close();
+});

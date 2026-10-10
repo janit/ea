@@ -95,3 +95,14 @@ Deno.test("corsHeaders — includes standard CORS headers", () => {
   );
   assertEquals(headers.get("Access-Control-Max-Age"), "86400");
 });
+
+Deno.test("corsHeaders — tracking path /c reflects origin", () => {
+  const req = new Request("https://analytics.example.com/c", {
+    headers: { origin: "https://mysite.com" },
+  });
+  const headers = corsHeaders(req);
+  assertEquals(
+    headers.get("Access-Control-Allow-Origin"),
+    "https://mysite.com",
+  );
+});

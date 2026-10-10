@@ -464,6 +464,7 @@ const SAFE_EVENT_KEYS: Record<string, Set<string>> = {
   form_submit: new Set(["method", "id", "name", "label", "path"]),
   outbound: new Set(["host", "path"]),
   download: new Set(["ext", "path"]),
+  engage: new Set(["ms", "path"]),
 };
 
 /** Strip event data to only safe behavioral keys for the given event type. */
@@ -514,6 +515,34 @@ async function anonymizeEventData(
 
 export function shouldAnonymize(siteId: string): boolean {
   return ANONYMIZE_SITES.has(siteId.toLowerCase());
+}
+
+/**
+ * shouldAnonymize() as a SQL predicate on the site id column or parameter
+ * `col`, or null when no site is anonymised. The ids come from
+ * ECHELON_ANONYMIZE_SITES; only those that can be a site id at all
+ * (validateSiteId's alphabet, lower-cased as shouldAnonymize compares them)
+ * are written into the statement, so nothing in it needs escaping.
+ */
+export function anonymizedSiteSql(col: string): string | null {
+  const ids = [...ANONYMIZE_SITES]
+    .filter((id) => /^[a-z0-9._-]{1,64}$/.test(id))
+    .sort();
+  if (ids.length === 0) return null;
+  return `lower(${col}) IN (${ids.map((id) => `'${id}'`).join(", ")})`;
+}
+
+/**
+ * The visitor id as it is written to the database for this site: unchanged,
+ * or the anonymised form. Anything that later matches rows by visitor id
+ * (the bot correlator) must remember this one, not the raw id.
+ */
+export async function storedVisitorId(
+  siteId: string,
+  visitorId: string,
+): Promise<string> {
+  if (!shouldAnonymize(siteId)) return visitorId;
+  return (await hmacHex(visitorId)).slice(0, 16);
 }
 
 async function anonymizePath(path: string): Promise<string> {

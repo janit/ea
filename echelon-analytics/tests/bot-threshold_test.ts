@@ -4,10 +4,12 @@
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import {
+  BOT_EXCLUDE_SCORE,
   BOT_THRESHOLD,
   CLEAN_SQL,
   cleanSql,
   isBotScore,
+  NO_ENGAGEMENT_SCORE,
 } from "@/lib/bot-threshold.ts";
 import { SCHEMA_SQL } from "@/lib/db/schema.ts";
 import { getOverview } from "@/lib/stats.ts";
@@ -86,4 +88,10 @@ Deno.test("threshold — startup rebuilds a clean index built for another thresh
   const sql = JSON.parse(lines[lines.length - 1]) as string;
   assert(sql.includes(CLEAN_SQL), sql);
   await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("score constants — exclude score is in the bot band, engagement score is the threshold", () => {
+  assertEquals(BOT_EXCLUDE_SCORE, 60);
+  assertEquals(BOT_EXCLUDE_SCORE > BOT_THRESHOLD, true);
+  assertEquals(NO_ENGAGEMENT_SCORE, BOT_THRESHOLD);
 });

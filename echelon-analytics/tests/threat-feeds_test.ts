@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
 import {
+  _adoptFeed as adoptFeed,
   _binarySearchRanges as binarySearch,
   _binarySearchRangesV6 as binarySearchV6,
   _ipv4ToNum as ipv4ToNum,
@@ -8,6 +9,8 @@ import {
   _mergeRangesV6 as mergeRangesV6,
   _parseCidrV4 as parseCidr,
   _parseCidrV6 as parseCidrV6,
+  _parseDigitalOceanCsv as parseDoCsv,
+  _parseOracleJson as parseOracle,
   isDatacenterIp,
   matchesAiCrawlerFeed,
   matchesCrawlerFeed,
@@ -210,4 +213,79 @@ Deno.test("matchers return false when no feeds loaded", () => {
   assertEquals(matchesCrawlerFeed("Googlebot/2.1"), false);
   assertEquals(matchesAiCrawlerFeed("GPTBot/1.0"), false);
   assertEquals(isDatacenterIp("3.5.140.1"), false);
+});
+
+// ── DigitalOcean + Oracle parsers ───────────────────────────────────────────
+
+Deno.test("parseDoCsv — reads the CIDR column, IPv4 and IPv6", () => {
+  const csv = [
+    "5.101.96.0/21,NL,NL-NH,Amsterdam,1098",
+    "2400:6180::/48,SG,SG-01,Singapore,",
+    "",
+    "not a cidr,US,,,",
+    "104.131.0.0/18,US,US-NY,New York,10013",
+  ].join("\n");
+  const r = parseDoCsv(csv);
+  assertEquals(r.v4.length, 2);
+  assertEquals(r.v6.length, 1);
+  assertEquals(r.v4[0], parseCidr("5.101.96.0/21"));
+});
+
+Deno.test("parseDoCsv — empty and garbage input yield nothing", () => {
+  assertEquals(parseDoCsv(""), { v4: [], v6: [] });
+  assertEquals(parseDoCsv("<html>503</html>"), { v4: [], v6: [] });
+});
+
+Deno.test("parseDoCsv — never widens: /0, trailing junk and bad prefixes are skipped", () => {
+  const r = parseDoCsv(
+    [
+      "0.0.0.0/0,US,,,",
+      "::/0,US,,,",
+      "10.0.0.0/8junk,US,,,",
+      "10.0.0.0/33,US,,,",
+      "10.0.0.0/-1,US,,,",
+      "5.101.96.0/21\r",
+    ].join("\n"),
+  );
+  assertEquals(r.v4, [parseCidr("5.101.96.0/21")!]);
+  assertEquals(r.v6, []);
+});
+
+Deno.test("parseOracleJson — reads every region's cidrs", () => {
+  const r = parseOracle({
+    regions: [
+      { region: "us-phoenix-1", cidrs: [{ cidr: "129.146.0.0/21" }] },
+      {
+        region: "eu-frankfurt-1",
+        cidrs: [{ cidr: "130.61.0.0/16" }, { cidr: "bogus" }],
+      },
+    ],
+  });
+  assertEquals(r.v4.length, 2);
+  assertEquals(r.v6.length, 0);
+});
+
+Deno.test("parseOracleJson — tolerates any malformed shape", () => {
+  for (
+    const bad of [null, undefined, 42, "x", {}, { regions: null }, {
+      regions: [null, { cidrs: null }, { cidrs: [null, {}, { cidr: 5 }] }],
+    }]
+  ) {
+    assertEquals(parseOracle(bad), { v4: [], v6: [] });
+  }
+});
+
+Deno.test("adoptFeed — takes a healthy refresh", () => {
+  const prior = { v4: [[1, 2]] as [number, number][], v6: [] };
+  const next = { v4: [[5, 6], [7, 8]] as [number, number][], v6: [] };
+  assertEquals(adoptFeed("test", prior, next), next);
+});
+
+Deno.test("adoptFeed — keeps prior data when a feed is empty or collapses", () => {
+  const prior = {
+    v4: Array.from({ length: 100 }, (_, i) => [i, i] as [number, number]),
+    v6: [],
+  };
+  assertEquals(adoptFeed("test", prior, { v4: [], v6: [] }), prior);
+  assertEquals(adoptFeed("test", prior, { v4: [[1, 1]], v6: [] }), prior);
 });

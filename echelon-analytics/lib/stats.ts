@@ -354,11 +354,26 @@ export async function getOverview(
     rawSince,
   );
 
+  // Visitors with proof of interaction (view-validator.ts). Raw rows only:
+  // the daily rollup does not carry `validated`, so for a period longer than
+  // raw retention this covers the retained part of it.
+  const v = await db.queryOne<{ n: number }>(
+    `SELECT COUNT(DISTINCT visitor_id) AS n
+     FROM visitor_views
+     WHERE site_id = ? AND created_at >= ? AND ${CLEAN_SQL}
+       AND validated = 1
+       ${NOT_EXCLUDED}`,
+    siteId,
+    rawSince,
+  );
+  const validatedVisitors = v?.n ?? 0;
+
   return {
     site_id: siteId,
     period_days: days,
     visits,
     unique_visitors: uniqueVisitors,
+    validated_visitors: validatedVisitors,
     avg_interaction_ms: avgInteractionMs,
     top_paths: topPaths,
     devices,

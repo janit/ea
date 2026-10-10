@@ -1,5 +1,9 @@
 import { assertEquals, assertGreater } from "@std/assert";
-import { purgeExpiredData, rollupDay } from "@/lib/maintenance.ts";
+import {
+  purgeAutoExclusions,
+  purgeExpiredData,
+  rollupDay,
+} from "@/lib/maintenance.ts";
 import {
   createTestDb,
   insertEvent,
@@ -351,5 +355,37 @@ Deno.test("purgeExpiredData — deletes more rows than one purge batch", async (
   `);
   const result = await purgeExpiredData(db, 90);
   assertEquals(result.views_deleted, 12001);
+  await db.close();
+});
+
+Deno.test("purgeAutoExclusions — removes old automatic exclusions only", async () => {
+  const db = createTestDb();
+  const now = Date.parse("2026-10-09T03:00:00.000Z");
+  const old = new Date(now - 31 * 86_400_000).toISOString();
+  const recent = new Date(now - 5 * 86_400_000).toISOString();
+  await db.run(
+    "INSERT INTO excluded_visitors (visitor_id, label, created_at) VALUES (?,?,?),(?,?,?),(?,?,?),(?,?,?)",
+    "auto-old",
+    "auto:burst_cohort",
+    old,
+    "auto-recent",
+    "auto:session_velocity",
+    recent,
+    "manual-old",
+    "office",
+    old,
+    "null-old",
+    null,
+    old,
+  );
+  assertEquals(await purgeAutoExclusions(db, now), 1);
+  const left = await db.query<{ visitor_id: string }>(
+    "SELECT visitor_id FROM excluded_visitors ORDER BY visitor_id",
+  );
+  assertEquals(left.map((r) => r.visitor_id), [
+    "auto-recent",
+    "manual-old",
+    "null-old",
+  ]);
   await db.close();
 });

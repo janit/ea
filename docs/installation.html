@@ -81,6 +81,13 @@ deno task dev</pre>
 <pre>&lt;script async src="https://your-host/ea.js" data-site="my-site"&gt;&lt;/script&gt;</pre>
 <p>That's it. Pageviews, bounces, and sessions are tracked automatically.</p>
 
+<h3>Content Security Policy</h3>
+<p>If your site sends a <code>Content-Security-Policy</code> header, it must let the tracker reach your Echelon host: the host in <code>script-src</code> (to load <code>/ea.js</code>), in <code>img-src</code> (the <code>/b.gif</code> pixel) and in <code>connect-src</code> (for <code>/c</code> and <code>/e</code>), plus <code>'wasm-unsafe-eval'</code> in <code>script-src</code> so the proof-of-work module can run:</p>
+<pre>script-src 'self' https://your-host 'wasm-unsafe-eval';
+connect-src 'self' https://your-host;
+img-src 'self' https://your-host</pre>
+<p>Without <code>'wasm-unsafe-eval'</code> the tracker still works but sends no token, so its requests carry the +30 missing-token penalty instead of being discarded at ingest. A view with no token and no interaction is later raised to the bot threshold by the engagement gate (see <a href="bot-defense.html">Bot Defense</a>).</p>
+
 <h2>Development Commands</h2>
 <p>All commands run from <code>echelon-analytics/</code>:</p>
 <pre># Development server (Vite HMR)
@@ -205,6 +212,20 @@ ECHELON_PASSWORD_HASH=pbkdf2$600000$&lt;salt&gt;$&lt;hash&gt;</pre>
 <p>Both auth modes can be used simultaneously.</p>
 
 <p class="seal-tip">🔐 "Did you know both API token and username/password auth can be used simultaneously? Use the bearer token for CI/CD pipelines and password login for your team's dashboard." -<span class="seal">🦭</span></p>
+
+<h2 id="upgrading">Upgrading</h2>
+<p>Upgrading to a version with validated visitors and the engagement gate (from one without them) changes three things on the first start:</p>
+<ul>
+  <li><strong>New indexes are built before the server listens.</strong> They cover <code>semantic_events</code>; allow a few seconds per million stored events. Requests are not answered until it finishes.</li>
+  <li><strong>The first sweep adds +15 to some recent views.</strong> Views from the last 30 minutes whose session sent only automatic events (bounce, session end, web vitals, scroll) used to be shielded from the no-interaction penalty by those events and no longer are.</li>
+  <li><strong>Do not turn on strict mode in the same deploy.</strong> Run the new version in its default mode first and compare validated visitors with unique visitors. With <code>ECHELON_REQUIRE_ENGAGEMENT=true</code> the first sweep removes every visit of the last three hours that did not interact.</li>
+</ul>
+<p>Upgrading to a version with the device, cross-site and geography signals:</p>
+<ul>
+  <li><strong>The new signals apply at once, on every site.</strong> From the first request after the upgrade, with no opt-in, the Windows tablet, Linux desktop and cross-site signals and the larger datacenter list (now also DigitalOcean and Oracle Cloud) are scored. Only the geography signals wait for a home country.</li>
+  <li><strong>Write-time drops cannot be recovered.</strong> A request that scores at or over <code>ECHELON_BOT_DISCARD_THRESHOLD</code> (default 50) when it arrives is not stored. To audit the new signals, run the first days with <code>ECHELON_BOT_DISCARD_THRESHOLD=0</code>, which turns write-time discarding off: no request is then dropped for its score, and each is stored with its score and score detail (known-bot user agents, excluded visitors, rate-limited requests and duplicate beacons are still not stored). Rows scoring 50 or more are still left out of all statistics and rollups; they show on the admin bots pages and are purged on the bot retention schedule (<code>ECHELON_BOT_RETENTION_DAYS</code>). Set the threshold back once the scores look right.</li>
+  <li><strong>An unused index is dropped.</strong> The first start removes <code>idx_se_session</code> from <code>semantic_events</code>; no action is needed.</li>
+</ul>
 
 <h2>Single-Process Constraint</h2>
 <p>Echelon Analytics keeps all state in memory (sessions, rate limiter, burst maps, buffered writers). You must run with a single Deno worker — do <strong>not</strong> use the <code>--parallel</code> flag with <code>deno serve</code>.</p>

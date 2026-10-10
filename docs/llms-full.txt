@@ -32,6 +32,8 @@ The dev server starts on http://localhost:1947 with Vite HMR.
 
 Pageviews, bounces, and sessions are tracked automatically.
 
+If the embedding site sends a Content-Security-Policy header, it must allow the Echelon host in script-src (to load /ea.js), img-src (the /b.gif pixel) and connect-src (for /c and /e), plus 'wasm-unsafe-eval' in script-src so the proof-of-work module can run. Without 'wasm-unsafe-eval' the tracker still works but sends no token, so its requests carry the +30 missing-token penalty instead of being discarded at ingest. A view with no token and no interaction is later raised to the bot threshold by the engagement gate.
+
 ## Development Commands
 
 All commands run from echelon-analytics/:
@@ -169,7 +171,7 @@ Cookie-authenticated mutating requests (POST, PATCH, DELETE) require the Origin 
 
 ### PoW Nonce Tracking
 
-Solved proof-of-work tokens are tracked in an in-memory Set. Replaying a previously-used token adds penalty points (+40) to the bot score instead of passing verification. Nonces are evicted when the challenge window expires (default 10 minutes + 1 minute grace period).
+Solved tokens are bound to session and site and accepted for the challenge window; the same session may re-present its token.
 
 ### Response Headers
 
@@ -211,6 +213,8 @@ Sites listed in ECHELON_ANONYMIZE_SITES get deterministic anonymization applied 
 - URL query parameters: Query param values scrambled client-side to prevent search text from appearing in page paths
 
 All mappings are deterministic within a day (same input → same output). Daily key rotation ensures anonymized IDs change each day.
+
+Session names come from a list of 50, so unrelated sessions on an anonymized site can share one. Interaction validation and the engagement gate therefore ignore the session id on such sites and match views and events to interactions by the anonymized visitor id, within 30 minutes.
 
 The public demo dashboard at ea.islets.app uses this to display real traffic patterns without exposing any visitor information.
 
@@ -516,11 +520,12 @@ Cookie-authenticated POST/PATCH/DELETE requests require CSRF validation (Origin 
 GET /ea.js — Returns the tracker script with embedded WASM proof-of-work challenge.
 GET /b.gif — Pageview beacon. Returns a 1x1 transparent GIF.
 POST /e — Behavioral events endpoint (via sendBeacon). Max 16 KB body, max 20 events per request. Returns 204.
+GET /c — Current PoW challenge, used by the tracker to refresh its token. Public, rate-limited, CORS-enabled.
 GET /api/health — Returns { "status": "ok", "service": "Echelon Analytics" }.
 
 ## Stats
 
-GET /api/stats/overview?site_id=X&days=N — Overview statistics. days defaults to 30 (max 730).
+GET /api/stats/overview?site_id=X&days=N — Overview statistics. days defaults to 30 (max 730). Includes unique_visitors and validated_visitors (distinct visitors with at least one validated view; raw rows only).
 GET /api/stats/dashboard?site_id=X — Live dashboard data: active visitors (now), 60-min trend (per-minute), 24h trend (per-hour), recent visitors and events.
 GET /api/stats/realtime?site_id=X — Active visitors in last 5 minutes.
 GET /api/stats/summary — Summary across all sites.
@@ -548,7 +553,7 @@ GET /api/bots/suspicious?site_id=X&min_score=25&limit=50 — List suspicious vis
 GET /api/bots/excluded — List excluded visitors.
 POST /api/bots/exclude — Exclude visitor. Body: { visitor_id, label }. Returns 201.
 DELETE /api/bots/exclude/:id — Remove exclusion.
-GET /api/bots/visitor/:id — Detailed visitor data (last 100 views and events).
+GET /api/bots/visitor/:id — Detailed visitor data (last 100 views and events). Each view includes session_id and validated.
 
 ## Performance Metrics
 
@@ -558,8 +563,8 @@ GET /api/perf/trends?limit=30&since=ISO8601 — Performance trends.
 
 ## Sites
 
-GET /api/sites/:id — Get site settings (consent CSS).
-PATCH /api/sites/:id — Update site consent CSS (max 4096 chars).
+GET /api/sites/:id — Get site settings: consent_css, home_country, home_language (null when unset).
+PATCH /api/sites/:id — Update site settings. Only fields present in the body change. consent_css (max 4096 chars), home_country (an assigned two-letter ISO code; one that cannot be placed on a continent, such as UK or XX, is refused; RU is accepted), home_language (language code such as fi or en). null or "" clears a field; invalid values return 400 (invalid_home_country, invalid_home_language). The site id is matched without regard to case.
 
 ## Data Ingest
 
@@ -608,22 +613,59 @@ Requests matching any pattern in ECHELON_BOT_UA_PATTERNS are dropped before scor
 | Missing Sec-CH-UA + Sec-Fetch-Site | Both headers absent | +10 |
 | Unrealistic screen | Width/height <= 0 or > 10000 | +10 |
 | No referrer + deep path | Direct visit to path with >= 2 segments | +5 |
-| PoW token missing | No proof-of-work token sent | +15 |
-| PoW token invalid | Token fails verification | +25 |
-| PoW token replayed | Previously-used nonce | +40 |
+| Crawler feed | User-Agent matches monperrus/crawler-user-agents | +30 |
+| AI crawler feed | User-Agent matches ai-robots-txt/robots.json | +40 |
+| Datacenter IP | Address in a published AWS, GCP, DigitalOcean or Oracle Cloud range (IPv4 and IPv6) | +24 |
+| Windows tablet mismatch | Windows UA with a 768-1024 px wide screen | +34 |
+| Linux desktop | Linux UA that is not Android (pageviews only; not scored on /e) | +10 |
+| Cross-site | One IP and browser on 3+ of the instance's sites within an hour | +34 |
+| Country mismatch | Visitor country implausible for the site's home country (needs a home country) | +15 |
+| Cross-continent | Visitor on another continent than the site's home (needs a home country) | +8 |
+| Windows tablet, foreign | Windows tablet mismatch from a common-everywhere country that is not the site's home | +15 |
+| Linux desktop, foreign | Linux desktop with a country mismatch from a common-everywhere country | +30 |
+| Old Android, foreign | Android 6 or older with a country mismatch from a common-everywhere country | +40 |
+| PoW token missing | No proof-of-work token sent | +30 |
+| PoW token invalid (pageview) | Token fails verification on /b.gif | +50 |
+| PoW token invalid (events) | Token fails verification on /e | +40 |
+| PoW waived | Session or visitor presented a valid token in the last hour (pow_ok; pow_ok_by is "s" for session or "v" for visitor) | 0 |
+| No interaction | No click, key press, tap or form use 5-30 minutes after the view | +15 |
+| No interaction, and a PoW penalty or a waiver by visitor key only | Carries any PoW penalty (missing or invalid token), or a waiver granted by the visitor key alone, and never interacted | raised to 50 |
+| No engagement (strict mode) | Session never interacted, 30-180 minutes after the view; ECHELON_REQUIRE_ENGAGEMENT=true only | raised to 50 |
 
 Score is capped at 100.
+
+Every weight above can be changed with ECHELON_BOT_SCORE_WEIGHTS (key:points,key:points, 0-100 each, 0 turns the signal off). The datacenter lists refresh every six hours; a provider whose refresh fails, is empty or shrinks to under 10% of its previous size keeps its old ranges. The Windows tablet, cross-site and datacenter weights are 34, 34 and 24 on purpose: a real visitor can carry any one of them, and one who then reads without clicking gets +15 for no interaction; the sums stay under the threshold of 50. Linux desktop (+10) is scored on pageviews only, not on the events endpoint (/e), where an invalid token is already +40.
+
+## Home Audience, Session Classifier, Duplicate Beacons
+
+Each site may declare home_country (ISO alpha-2) and home_language via PATCH /api/sites/:id or Settings -> Home Audience. Geography signals do nothing without a home country, and also need a visitor country (ECHELON_BEHIND_CLOUDFLARE or ECHELON_TRUST_GEO_HEADERS). Same-continent visitors are never a mismatch, and a country the continent table does not know (XX, T1) is never foreign. The home country must be an assigned code that can be placed on a continent, or RU: anything else (UK for GB, EN, XX) is refused with a 400, and such a code already stored is treated as not set. RU has no continent in the table, so with a home of RU no visitor shares its continent: every visitor from another country is a mismatch, neighbours included (the exemption below still holds). On English-language sites (or with no language set) these common-everywhere countries are exempt from country_mismatch: US CA AU NZ JP KR SG IN TR RU MA AE MX PK. Windows tablet, foreign applies on any site; Linux desktop, foreign and Old Android, foreign also need the country mismatch, so they apply only where the home language is not English.
+
+Costs to real visitors of opting in: on a non-English site, a Linux desktop or Android 6 or older visitor from a common-everywhere country scores 63 from these signals alone (over the threshold of 50) and is not counted; other foreign visitors carry 15 to 23 points. The tracker reports screen.width in CSS pixels, so a real Windows laptop with display scaling can land in the 768-1024 band (1280 at 125%, 1366 at 150%) and carry +34; lower win_tablet_mismatch or set it to 0. Cross-site flags a person who browses sibling sites you run together; browsers now send nearly identical user agents, so people sharing one address (office, campus, mobile carrier) pool into one count too. Set cross_site:0 on an instance whose sites share an audience. Cross-site is scored on the pageview beacon only and never when the client address cannot be resolved (no peer address, or a forwarded header without ECHELON_TRUST_PROXY).
+
+The session classifier runs two minutes after start and then every 15 minutes, over a 30 minute lookback and judges an identity once its oldest view in the window is 12 minutes old: session_velocity (6+ page visits to 6+ different pathnames with an average gap <= 3 s; consecutive views of one pathname count once, so views that differ only in query string or fragment are one visit), os_rotation (3+ OS names in one vendor family), os_family_flip (2+ of Apple, Android, Windows on one session or visitor), burst_cohort (40+ single-view sessions sharing site, country and screen size, from another continent than the site's home country; needs a home country, and does nothing when either country has no known continent). Flagged rows get bot_score 60 (detail key classifier) and the visitor is excluded as auto:<reason>; daily maintenance removes those after 30 days. A manual exclusion of such a visitor replaces the auto: label and is permanent. os_family_flip and burst_cohort apply even to validated visitors; session_velocity and os_rotation spare them. Browser DevTools device emulation or a user-agent switcher in one tab can trip os_family_flip on its owner. On anonymized sites session-keyed findings are skipped.
+
+A pageview beacon with the same site, session and per-pageview nonce (random 16 hex characters, parameter _n, drawn by the tracker once per landing pageview) as one recorded in the last 10 minutes is answered normally but not counted. A reload gets a new nonce and is counted. A beacon without a well-formed nonce is always counted; SPA navigation beacons and beacons without a session id are exempt.
+
+## Validated Visitors
+
+bot_score measures suspicion; validated measures proof. The tracker sends one `engage` event per pageview on the first pointerdown, keydown or touchstart. A background validator (every 60 s, 15 min lookback, matched per session) sets visitor_views.validated = 1 when the view's score is clean, its session has a clean interaction event, and the page outlived its load (session_end with dwell_s >= 2, or an interaction at least 10 s after the view plus two distinct interaction types).
+
+Interaction events: engage, click, ad_click, form_focus, form_blur, form_submit, hover, outbound, download. Passive events (never validate): bounce, session_end, session_resume, scroll_depth, web_vital, custom.
+
+The engagement gate judges the other views during the bot correlator sweep: a view aged 5-30 minutes with no interaction gets +15, or is raised to the threshold if it also carries a PoW penalty or was waived only by the visitor key. A session that interacted at any time is shielded as a whole; validated views are never touched. Both penalties are provisional: the marks (no_events, unproven) store the points they added, and each sweep first looks back 180 minutes and takes those points off again from views whose session has interacted since, unless the correlator or strict mode has judged the view in the meantime. With ECHELON_REQUIRE_ENGAGEMENT=true (default off), views and events of sessions that never interacted are raised to the threshold 30-180 minutes after they were written and stop counting; that is not undone.
+
+The overview API returns validated_visitors, and visitor detail views carry validated and session_id. Retroactive penalties never apply to a visitor who owns a validated view from a non-datacenter IP; the fingerprint correlator also waits until a visitor's first print is 12 minutes old. On anonymized sites session ids are one of 50 names that unrelated visits share, so the validator and the gate judge those sites by the anonymized visitor id instead: an interaction counts for a view or event only if it has the same visitor id and happened within 30 minutes of it.
 
 ## Proof-of-Work System
 
 Every request for /ea.js embeds a WebAssembly blob and a challenge string. The browser must solve the challenge before sending beacons.
 
-- A WASM module is generated from a 64-byte random seed every 6 hours
+- A WASM module is generated every 6 hours (calendar-window rotation) from a 64-byte seed derived from ECHELON_SECRET (random per process if no secret is set)
 - Implements a SipHash-inspired algorithm with randomized constants
 - Challenge string rotates every minute (HMAC-SHA256 of minute bucket)
 - Client computes: token = wasm.solve(challenge + ":" + sessionId + ":" + siteId)
 - Token is a 32-character hex string
-- Cached in sessionStorage, re-solved on 10% of requests
+- Cached in sessionStorage and reused while the challenge matches; about one page load in ten ignores the cached token and solves again; an open tab re-solves when its token is 4 minutes old
 - WASM solve is awaited up to 150ms before sending the beacon
 
 Server verification tries all combinations of:
@@ -631,7 +673,9 @@ Server verification tries all combinations of:
 - Current + previous WASM slots (covers 6-hour rotation)
 - Last N minute buckets (configurable via ECHELON_CHALLENGE_WINDOW_MINUTES, default 10)
 
-Returns "valid", "missing", "invalid", or "replayed" — each adding different penalty points. Used nonces are tracked in memory and replaying a token adds +40 points instead of passing.
+Returns "valid", "missing", or "invalid". A session or visitor that has presented a valid token on a site is not penalised for a missing or stale token for the next hour (recorded as pow_ok). The tracker refreshes its token from GET /c before the challenge window closes.
+
+A token is bound to the session and site it was solved for and does not verify for another. If the embedding site sends a Content-Security-Policy header, it must allow the Echelon host in script-src (to load /ea.js), img-src (the /b.gif pixel) and connect-src (for /c and /e), plus 'wasm-unsafe-eval' in script-src so the proof-of-work module can run. Without 'wasm-unsafe-eval' the tracker still works but sends no token, so its requests carry the +30 missing-token penalty instead of being discarded.
 
 ## Burst Detection
 
@@ -641,7 +685,7 @@ Returns "valid", "missing", "invalid", or "replayed" — each adding different p
 
 ## Rate Limiting
 
-Tracking endpoints (/b.gif, /e) are rate-limited per IP:
+Tracking endpoints (/b.gif, /e) and the challenge endpoint (/c) are rate-limited per IP:
 
 - Default: 100 requests per 60-second window
 - Configurable via ECHELON_RATE_LIMIT_MAX and ECHELON_RATE_LIMIT_WINDOW_MS
@@ -671,7 +715,7 @@ DELETE /api/bots/exclude/abc123 — Re-include visitor
 
 ## Discard Threshold
 
-Set ECHELON_BOT_DISCARD_THRESHOLD to a score (e.g., 80) to discard high-score requests before storage. Default is 0 (store all, filter at rollup time).
+Requests scoring at or over ECHELON_BOT_DISCARD_THRESHOLD are discarded before storage and cannot be recovered. Default is 50 (the bot threshold). Set it higher (e.g., 80) to store the rows in between, or to 0 to store everything. Stored rows scoring 50 or more are still left out of all statistics; they are visible with their score detail on the admin bots pages. When upgrading to a version with new signals (the device and cross-site signals and the larger datacenter list apply on every site from the first request, with no opt-in), run the first days with ECHELON_BOT_DISCARD_THRESHOLD=0 to audit what they catch.
 
 ---
 
@@ -707,9 +751,11 @@ deno eval "import{hashPassword}from'./lib/auth.ts';console.log(await hashPasswor
 | ECHELON_SUSPECT_COUNTRIES | CN | Comma-separated ISO-2 codes that add penalty points |
 | ECHELON_SUSPECT_POINTS | 30 | Points added per suspect country match |
 | ECHELON_SITE_SUSPECT_COUNTRIES | (empty) | Per-site suspect countries: site:CC,CC;site:CC |
-| ECHELON_BOT_DISCARD_THRESHOLD | 0 | Scores >= this are discarded before storage. 0 = store all |
+| ECHELON_BOT_DISCARD_THRESHOLD | 50 | Scores >= this are discarded before storage. 0 = store all (rows scoring 50 or more are still left out of statistics) |
 | ECHELON_BOT_UA_PATTERNS | (long list) | Comma-separated UA substrings to drop entirely |
 | ECHELON_CHALLENGE_WINDOW_MINUTES | 10 | Minutes of past PoW challenges accepted as valid |
+| ECHELON_REQUIRE_ENGAGEMENT | false | Also treat sessions that never interact (click, key press, tap, form use) as bots: their views and events are raised to the bot threshold 30-180 minutes after they were written and stop counting. Leave off unless you want engaged visits only, and do not switch it on in the same deploy as an upgrade |
+| ECHELON_BOT_SCORE_WEIGHTS | (empty) | Per-signal bot score weights, key:points,key:points (0-100; 0 turns the signal off; unknown keys and bad values are ignored with a startup warning). Keys: timing_fast, timing_quick, burst, no_accept_language, no_sec_headers, screen, referrer, crawler_feed, ai_crawler_feed, datacenter_ip, win_tablet_mismatch, linux_desktop, cross_site, country_mismatch, cross_continent, global_common_foreign, linux_foreign, stale_android_foreign |
 
 ## Rate Limiting
 
@@ -842,7 +888,7 @@ Browser tests use @astral/astral (Deno-native headless Chromium). They live in t
 
 ## Overview
 
-Echelon Analytics is a Deno + Fresh application backed by a single SQLite database. All state — sessions, rate limiter, burst maps, buffered writers — lives in memory. Runs as a single process.
+Echelon Analytics is a Deno + Fresh application backed by a single SQLite database. All state — sessions, rate limiter, burst maps, cross-site map, beacon dedup map, site home cache, buffered writers — lives in memory. Runs as a single process.
 
 ## Tech Stack
 
@@ -875,10 +921,10 @@ SQLite with WAL mode. PRAGMAs: journal_mode=WAL, synchronous=NORMAL, busy_timeou
 
 ### Supporting Tables
 
-- excluded_visitors: Manual bot exclusion list.
+- excluded_visitors: Bot exclusion list (manual, plus auto:<reason> entries from the session classifier).
 - experiments / experiment_variants: A/B experiment definitions.
 - utm_campaigns: Campaign tracking.
-- site_settings: Per-site consent CSS.
+- site_settings: Per-site consent CSS, home country and language.
 - perf_metrics: CI/CD performance tracking.
 - maintenance_log: Rollup status tracking.
 
@@ -912,7 +958,7 @@ Failed flushes re-add records to buffer. Graceful shutdown flushes remaining buf
 - Password: PBKDF2-SHA256, 600k iterations, 256-bit key, 128-bit salt. Web Crypto API only.
 - Sessions: In-memory, random UUID tokens, 24h TTL, 30-min idle timeout, pruned every 30 minutes.
 - CSRF: Mutating requests with cookie auth require Origin/Referer host to match request Host.
-- PoW nonce tracking: Used tokens tracked in-memory, replay attempts penalized (+40 bot score).
+- PoW nonce tracking: Solved tokens are bound to session and site and accepted for the challenge window; the same session may re-present its token.
 - Response headers: CSP, X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy.
 - Login rate limiting: 5 attempts per IP per 15-minute window.
 
@@ -926,6 +972,10 @@ echelon-analytics/
     beacon.ts              Pageview beacon handler
     events-endpoint.ts     Event handler
     bot-score.ts           Bot scoring heuristics
+    geo.ts                 Country to continent, mismatch rules
+    site-home.ts           Per-site home country and language
+    session-classifier.ts  Cross-request bot patterns (every 15 min)
+    beacon-dedup.ts        Drops redelivered pageview beacons
     challenge.ts           PoW challenge management
     challenge-wasm.ts      WASM bytecode builder
     buffered-writer.ts     Generic batch writer
@@ -947,6 +997,7 @@ echelon-analytics/
     ea.js.ts               GET /ea.js
     b.gif.ts               GET /b.gif
     e.ts                   POST /e
+    c.ts                   GET /c (current PoW challenge for token refresh)
     _middleware.ts          CORS, security headers
     api/                   REST API routes
     admin/                 Admin UI routes

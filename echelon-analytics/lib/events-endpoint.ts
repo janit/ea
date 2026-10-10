@@ -27,6 +27,8 @@ import {
 } from "./config.ts";
 import { anonymizeEvent, shouldAnonymize } from "./anonymize.ts";
 import { tokenPenalty, verifyToken } from "./challenge.ts";
+import { ALLOWED_EVENT_TYPES } from "./event-classes.ts";
+import { markProven, provenBy, provenKeys } from "./proven-sessions.ts";
 import {
   isDatacenterIp,
   matchesAiCrawlerFeed,
@@ -39,6 +41,7 @@ import {
 } from "./buffered-writer.ts";
 import { isUtmCampaignActive } from "./utm.ts";
 import { debug } from "./debug.ts";
+import { getSiteHome, refreshSiteHomes } from "./site-home.ts";
 
 interface ClientEvent {
   type: string;
@@ -81,23 +84,6 @@ async function readBodyCapped(req: Request, maxBytes: number): Promise<string> {
   }
   return out;
 }
-
-const ALLOWED_EVENT_TYPES = new Set([
-  "bounce",
-  "session_end",
-  "session_resume",
-  "scroll_depth",
-  "click",
-  "ad_click",
-  "form_focus",
-  "form_blur",
-  "form_submit",
-  "hover",
-  "outbound",
-  "download",
-  "web_vital",
-  "custom",
-]);
 
 import { getRequestCookie as getCookie } from "./cookie.ts";
 
@@ -291,6 +277,7 @@ export async function handleEvents(
   // cold boot the cache is empty until refreshExcluded runs. 60s TTL
   // enforced inside refreshExcluded — cheap no-op when still fresh.
   await refreshExcluded(db);
+  await refreshSiteHomes(db);
 
   // Skip excluded visitors
   if (isExcluded(visitorId)) {
@@ -305,6 +292,7 @@ export async function handleEvents(
 
   const ua = req.headers.get("user-agent") ?? "";
   const cfSignals = extractCloudflareSignals(req);
+  const home = getSiteHome(siteId);
   const scoreResult = computeBotScoreWithDetail({
     burstCount,
     hasAcceptLanguage: req.headers.has("accept-language"),
@@ -312,6 +300,13 @@ export async function handleEvents(
     hasSecFetchSite: req.headers.has("sec-fetch-site"),
     visitorCountry,
     siteId,
+    // No screen dimensions on this path, so the Windows-tablet rules cannot
+    // fire here. cross_site and linux_desktop are scored on the beacon only;
+    // the user agent still feeds linux_foreign and stale_android_foreign.
+    surface: "events",
+    userAgent: ua,
+    homeCountry: home.country,
+    homeLanguage: home.language,
     crawlerFeedMatch: matchesCrawlerFeed(ua),
     aiCrawlerFeedMatch: matchesAiCrawlerFeed(ua),
     datacenterIp: isDatacenterIp(ip),
@@ -323,7 +318,19 @@ export async function handleEvents(
   const firstSession = events[0]?.sessionId;
   const sessionIdForPow = typeof firstSession === "string" ? firstSession : "";
   const tokenResult = await verifyToken(tok, siteId, sessionIdForPow);
-  const powPenalty = tokenPenalty(tokenResult);
+  // Same waiver as the beacon: see proven-sessions.ts. provenKeys ignores a
+  // session id that is not UUID-shaped.
+  const proofKeys = provenKeys(siteId, sessionIdForPow, visitorId ?? null);
+  if (tokenResult === "valid") markProven(proofKeys);
+  let powPenalty = tokenPenalty(tokenResult, "events");
+  // pow_ok_by records which key granted the waiver: "s" (this session
+  // proved work) or "v" (only the visitor did).
+  const waivedBy = powPenalty > 0 ? provenBy(proofKeys) : null;
+  if (waivedBy) {
+    scoreResult.detail.pow_ok = powPenalty;
+    scoreResult.detail.pow_ok_by = waivedBy;
+    powPenalty = 0;
+  }
   if (powPenalty > 0) {
     scoreResult.detail.pow = powPenalty;
     scoreResult.detail.pow_result = tokenResult;

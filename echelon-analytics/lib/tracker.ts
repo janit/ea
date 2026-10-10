@@ -169,40 +169,107 @@ try {
 } catch(x) {}
 
 // ── PoW Challenge ───────────────────────────────────────────────────────────
-var tok = "";
-var tokReady = null;
+// The first token comes from the challenge baked into this script. The server
+// accepts a challenge for 10 minutes and this script is cached for 5, so a
+// tab that stays open must re-solve: it keeps the WASM instance and fetches a
+// fresh challenge from /c once the token is 4 minutes old.
+var tok = "", tokTs = 0, tokReady = null, tokRefreshing = null, wasmInst = null, tokFailTs = 0;
+var TOK_REFRESH_MS = 240000, TOK_BACKOFF_MS = 60000;
+var canSolve = !!(_w && _c && typeof WebAssembly === "object");
+
+function getWasm() {
+  if (wasmInst) return Promise.resolve(wasmInst);
+  var bin = atob(_w);
+  var bytes = new Uint8Array(bin.length);
+  for (var wi = 0; wi < bin.length; wi++) bytes[wi] = bin.charCodeAt(wi);
+  return WebAssembly.instantiate(bytes).then(function(r) { wasmInst = r.instance; return wasmInst; });
+}
+
+// A WASM instantiate/solve failure (e.g. host CSP without wasm-unsafe-eval)
+// is permanent for this tab: stop trying. Network/body failures are not.
+function solveTok(ch) {
+  return Promise.resolve().then(getWasm).then(function(inst) {
+    var mem = new Uint8Array(inst.exports.memory.buffer);
+    var enc = new TextEncoder().encode(ch + ":" + sid + ":" + siteId);
+    mem.set(enc, 0);
+    inst.exports.solve(0, enc.length, 2048);
+    var out = mem.slice(2048, 2064), t = "";
+    for (var hi = 0; hi < 16; hi++) t += (out[hi] < 16 ? "0" : "") + out[hi].toString(16);
+    tok = t;
+    tokTs = Date.now();
+    dbg("PoW: solved", { tok: tok.slice(0, 8) + "..." });
+    try { sessionStorage.setItem("_etok", ch + ":" + tok + ":" + tokTs); } catch(x) {}
+    return tok;
+  }).catch(function(e) { canSolve = false; throw e; });
+}
+
+function tokBackoff() { return tokFailTs && Date.now() - tokFailTs < TOK_BACKOFF_MS; }
+
+function refreshTok() {
+  if (!canSolve || tokBackoff()) return Promise.resolve(tok);
+  if (tokRefreshing) return tokRefreshing;
+  tokRefreshing = fetch(base + "/c", { cache: "no-store" })
+    .then(function(r) { return r.text(); })
+    .then(function(ch) {
+      ch = (ch || "").trim();
+      if (!/^[0-9a-f]{32}$/.test(ch)) throw 0;
+      return solveTok(ch).then(function(t) { tokFailTs = 0; return t; });
+    })
+    .catch(function() { tokFailTs = Date.now(); dbg("PoW: refresh failed, keeping current token"); return tok; })
+    .then(function(t) { tokRefreshing = null; return t; });
+  return tokRefreshing;
+}
+
+function tokStale() { return Date.now() - tokTs > TOK_REFRESH_MS; }
+function maybeRefreshTok() { if (canSolve && !document.hidden && tokStale()) refreshTok(); }
+// A pageview beacon may wait briefly for a token (first solve, or a refresh
+// of an aged one). While it waits it is "parked": the page moving on (SPA
+// navigation, hide, pagehide) sends it at once with whatever token there is,
+// and the late wake-up then does nothing. Callers capture their URL before
+// parking, so a parked beacon always reports the page it was fired for.
+var parked = null;
+function flushParked() { if (parked) parked(); }
+function parkUntil(p, ms, send) {
+  flushParked();
+  var go = function() { if (parked !== go) return; parked = null; send(); };
+  parked = go;
+  Promise.race([p, new Promise(function(r) { setTimeout(r, ms); })]).then(go);
+}
+// Before a pageview beacon: if the token has aged, re-solve first (capped at
+// 1s) so the pageview does not verify "invalid".
+function withFreshTok(send) {
+  if (canSolve && tokStale() && !tokBackoff()) {
+    parkUntil(refreshTok(), 1000, send);
+  } else {
+    send();
+  }
+}
+
 try {
   var cached = sessionStorage.getItem("_etok");
   if (cached) {
     var parts = cached.split(":");
     if (parts[0] === _c && parts[1] && /^[0-9a-f]{32}$/.test(parts[1]) && Math.random() > 0.1) {
       tok = parts[1];
-      dbg("PoW: using cached token", tok.slice(0, 8) + "...", "challenge match:", parts[0] === _c);
-    } else {
-      dbg("PoW: cached token stale", { cachedChallenge: parts[0] ? parts[0].slice(0, 8) + "..." : "(none)", currentChallenge: _c.slice(0, 8) + "..." });
+      // A token cached by an older tracker has no timestamp: treat as stale.
+      tokTs = parseInt(parts[2], 10) || 0;
+      dbg("PoW: using cached token", tok.slice(0, 8) + "...");
     }
   }
 } catch(x) {}
 
-if (!tok && _w && _c) {
-  dbg("PoW: solving fresh", { challenge: _c.slice(0, 8) + "...", sid: sid.slice(0, 8) + "...", siteId: siteId });
+if (!tok && canSolve) {
   try {
-    var bin = atob(_w);
-    var bytes = new Uint8Array(bin.length);
-    for (var wi = 0; wi < bin.length; wi++) bytes[wi] = bin.charCodeAt(wi);
-    tokReady = WebAssembly.instantiate(bytes).then(function(r) {
-      var mem = new Uint8Array(r.instance.exports.memory.buffer);
-      var inp = _c + ":" + sid + ":" + siteId;
-      var enc = new TextEncoder().encode(inp);
-      mem.set(enc, 0);
-      r.instance.exports.solve(0, enc.length, 2048);
-      var out = mem.slice(2048, 2064);
-      tok = "";
-      for (var hi = 0; hi < 16; hi++) tok += (out[hi] < 16 ? "0" : "") + out[hi].toString(16);
-      dbg("PoW: solved", { tok: tok.slice(0, 8) + "...", input: inp.slice(0, 40) + "..." });
-      try { sessionStorage.setItem("_etok", _c + ":" + tok); } catch(x) {}
-    }).catch(function(e) { dbg("PoW: WASM solve failed", e); });
+    tokReady = solveTok(_c).catch(function(e) { dbg("PoW: WASM solve failed", e); });
   } catch(x) { dbg("PoW: WASM instantiation error", x); }
+}
+
+if (canSolve) {
+  try {
+    setInterval(maybeRefreshTok, 30000);
+    document.addEventListener("visibilitychange", maybeRefreshTok);
+    addEventListener("pageshow", maybeRefreshTok);
+  } catch(x) {}
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -211,6 +278,7 @@ function up(el, pred) { for (var i = 0; i < 8 && el && el !== document.body; i++
 function ecData(el, skip) { var o = {}, c = 0; if (!el.dataset) return o; for (var k in el.dataset) { if (c >= 8) break; if (k !== skip && k.indexOf("echelon") === 0) { o[k.slice(7, 8).toLowerCase() + k.slice(8)] = String(el.dataset[k]).slice(0, 256); c++; } } return o; }
 function sendEvents(events) {
   if (!events.length) return;
+  maybeRefreshTok();
   try {
     if (utmC) for (var ei = 0; ei < events.length; ei++) events[ei].utmCampaign = utmC;
     dbg("sendEvents", { types: events.map(function(e) { return e.type; }), tok: tok ? tok.slice(0, 8) + "..." : "(none)" });
@@ -252,23 +320,44 @@ if (utmC) {
 
 var interactionEvents = ["pointerdown", "scroll", "click", "keydown"];
 
-function sendBeaconImg() {
-  beaconUrl += "&sid=" + sid + "&_v=" + (Date.now() - t0) +
-    "&sw=" + screen.width + "&sh=" + screen.height +
-    (tok ? "&tok=" + tok : "");
-  dbg("beacon", { url: beaconUrl.replace(base, ""), tok: tok ? tok.slice(0, 8) + "..." : "(none)", waitMs: Date.now() - t0 });
-  new Image().src = beaconUrl;
-  interactionEvents.forEach(function(n) { removeEventListener(n, onInteraction); });
-  document.removeEventListener("visibilitychange", onVisChange);
+// 16 lowercase hex characters, one per pageview: lets the server tell a
+// redelivery of this beacon URL from a reload. Never throws.
+function pageviewNonce() {
+  var out = "";
+  try {
+    if (crypto && crypto.getRandomValues) {
+      var a = crypto.getRandomValues(new Uint8Array(8));
+      for (var i = 0; i < 8; i++) out += (a[i] < 16 ? "0" : "") + a[i].toString(16);
+      return out;
+    }
+  } catch(e) {}
+  out = "";
+  for (var j = 0; j < 16; j++) out += Math.floor(Math.random() * 16).toString(16);
+  return out;
 }
+
 function fireBeacon() {
   if (fired) return;
   fired = 1;
+  interactionEvents.forEach(function(n) { removeEventListener(n, onInteraction); });
+  document.removeEventListener("visibilitychange", onVisChange);
+  // Capture this page's URL and clock now: the send may be parked, and an SPA
+  // navigation in the meantime rewrites beaconUrl and t0.
+  var url = beaconUrl + "&_n=" + pageviewNonce(), start = t0;
+  var send = function() {
+    url += "&sid=" + sid + "&_v=" + (Date.now() - start) +
+      "&sw=" + screen.width + "&sh=" + screen.height +
+      (tok ? "&tok=" + tok : "");
+    dbg("beacon", { url: url.replace(base, ""), tok: tok ? tok.slice(0, 8) + "..." : "(none)", waitMs: Date.now() - start });
+    new Image().src = url;
+  };
   if (!tok && tokReady) {
     // Wait up to 150ms for WASM to finish before sending
-    Promise.race([tokReady, new Promise(function(r) { setTimeout(r, 150); })]).then(sendBeaconImg);
+    parkUntil(tokReady, 150, send);
   } else {
-    sendBeaconImg();
+    // A tab that sat in the background, frozen or asleep has an aged token.
+    // A page being hidden or closed cannot afford the round trip: send now.
+    document.hidden ? send() : withFreshTok(send);
   }
 }
 
@@ -284,6 +373,22 @@ function onVisChange() {
 
 interactionEvents.forEach(function(n) { addEventListener(n, onInteraction, { passive: true }); });
 document.addEventListener("visibilitychange", onVisChange);
+// A parked beacon (landing or SPA) must not be lost when the page goes away.
+document.addEventListener("visibilitychange", function() { if (document.hidden) flushParked(); });
+addEventListener("pagehide", flushParked);
+
+// ── 1b. Engagement signal ───────────────────────────────────────────────────
+// One event per pageview on the first real gesture. Most sites tag no
+// elements with data-echelon-*, so without this a person who reads a page and
+// follows a link produces no event that proves a gesture happened. Scroll is
+// deliberately excluded: it is trivially scripted.
+var engaged = 0;
+function onEngage(a) {
+  if (engaged || !a.isTrusted) return;
+  engaged = 1;
+  sendEvents([{ type: "engage", data: { ms: Date.now() - t0, path: location.pathname }, sessionId: sid }]);
+}
+["pointerdown", "keydown", "touchstart"].forEach(function(n) { addEventListener(n, onEngage, { passive: true }); });
 
 // ── 2. Bounce Detection ────────────────────────────────────────────────────
 var bounced = 0;
@@ -596,10 +701,14 @@ function onNavigate() {
   if (currentPath === lastPath) return;
   lastPath = currentPath;
 
+  // The previous page's beacon, if still parked, goes out first.
+  flushParked();
+
   // Reset state for new "page"
   t0 = Date.now();
   fired = 0;
   bounced = 0;
+  engaged = 0;
   sessionEnded = 0;
   maxScroll = 0;
   reached = {};
@@ -636,11 +745,14 @@ function onNavigate() {
   }
 
   // Fire immediately — user already interacted to trigger SPA navigation
+  // (after re-solving an aged token, see withFreshTok).
   fired = 1;
-  beaconUrl += "&sid=" + sid + "&_v=spa&sw=" + screen.width + "&sh=" + screen.height +
-    (tok ? "&tok=" + tok : "");
-  dbg("SPA nav", { path: currentPath, tok: tok ? tok.slice(0, 8) + "..." : "(none)" });
-  new Image().src = beaconUrl;
+  var navUrl = beaconUrl + "&sid=" + sid + "&_v=spa&sw=" + screen.width + "&sh=" + screen.height;
+  var sendNav = function() {
+    dbg("SPA nav", { path: currentPath, tok: tok ? tok.slice(0, 8) + "..." : "(none)" });
+    new Image().src = navUrl + (tok ? "&tok=" + tok : "");
+  };
+  withFreshTok(sendNav);
 }
 
 var origPush = history.pushState;
@@ -664,7 +776,8 @@ window.echelon = {
       }
     }
     sendEvents([{ type: "custom", data: safe, sessionId: sid }]);
-  }
+  },
+  _refreshToken: refreshTok
 };
 
 } // end init()
@@ -754,4 +867,22 @@ export async function handleTracker(
     );
 
   return new Response(script, { headers: SCRIPT_HEADERS });
+}
+
+/**
+ * GET /c — the current challenge, for a tracker that needs to re-solve.
+ *
+ * The page's first token is derived from the challenge baked into /ea.js. A
+ * tab that stays open outlives it (the server accepts a challenge for
+ * CHALLENGE_WINDOW_MINUTES), so the tracker fetches a fresh one here and
+ * re-solves with the WASM it already holds. The challenge is not a secret —
+ * it ships in every /ea.js — so this needs no origin gate, only a rate limit.
+ */
+export async function handleChallenge(): Promise<Response> {
+  return new Response(await generateChallenge(), {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }

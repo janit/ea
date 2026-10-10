@@ -302,6 +302,34 @@ async function backfillMissedRollups(
   }
 }
 
+/** Automatic exclusions outlive nothing they could match after this long. */
+const AUTO_EXCLUSION_DAYS = 30;
+
+/**
+ * Remove exclusions the session classifier wrote (`auto:<reason>`) once they
+ * are older than the visitor cookie's lifetime. A cookieless visitor id is
+ * dead after a day and a cookie after 30, so older rows can never match
+ * again and only grow the table and the ingest cache.
+ *
+ * The label is all there is to go by: every row whose label starts with
+ * `auto:` goes, including one an operator typed that way. Any other label,
+ * or none, is kept for good. A manual exclusion of a visitor the classifier
+ * had already excluded replaces the `auto:` label (routes/api/bots/exclude.ts)
+ * and so is kept too.
+ */
+export async function purgeAutoExclusions(
+  db: DbAdapter,
+  now: number = Date.now(),
+): Promise<number> {
+  const cutoff = new Date(now - AUTO_EXCLUSION_DAYS * 86_400_000).toISOString();
+  const result = await db.run(
+    `DELETE FROM excluded_visitors
+      WHERE label LIKE 'auto:%' AND created_at < ?`,
+    cutoff,
+  );
+  return result.changes;
+}
+
 /**
  * Run the full daily maintenance cycle:
  * 1. Retry incomplete rollups (bounded to raw retention)
@@ -362,6 +390,12 @@ export async function runDailyMaintenance(db: DbAdapter): Promise<void> {
     const rollupRows = await rollupDay(db, date);
     const purged = await purgeExpiredData(db);
     console.log("[echelon] daily maintenance: purged", purged);
+    const autoExclusions = await purgeAutoExclusions(db);
+    if (autoExclusions > 0) {
+      console.log(
+        `[echelon] daily maintenance: removed ${autoExclusions} expired automatic exclusions`,
+      );
+    }
 
     await db.run(
       `UPDATE maintenance_log SET status = 'complete', rollup_rows = ?, purge_views = ?, purge_events = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE date = ?`,

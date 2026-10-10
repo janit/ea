@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { createTestDb } from "./_helpers.ts";
+import { createTestDb, insertView } from "./_helpers.ts";
 
 Deno.test("SqliteAdapter — query returns rows", async () => {
   const db = createTestDb();
@@ -200,5 +200,35 @@ Deno.test("SqliteAdapter — boolean params converted to 0/1", async () => {
     "bool-test",
   );
   assertEquals(row?.is_returning, 1);
+  await db.close();
+});
+
+Deno.test("schema — visitor_views.validated exists and defaults to 0", async () => {
+  const db = createTestDb();
+  assertEquals(await db.columnExists("visitor_views", "validated"), true);
+  await insertView(db, { visitor_id: "validateddefault" });
+  const row = await db.queryOne<{ validated: number }>(
+    "SELECT validated FROM visitor_views WHERE visitor_id = ?",
+    "validateddefault",
+  );
+  assertEquals(row?.validated, 0);
+  await db.close();
+});
+
+Deno.test("fixtures — insertView accepts validated and bot_score_detail", async () => {
+  const db = createTestDb();
+  await insertView(db, {
+    visitor_id: "fixturevalidated",
+    validated: 1,
+    bot_score_detail: '{"pow":30}',
+  });
+  const row = await db.queryOne<
+    { validated: number; bot_score_detail: string }
+  >(
+    "SELECT validated, bot_score_detail FROM visitor_views WHERE visitor_id = ?",
+    "fixturevalidated",
+  );
+  assertEquals(row?.validated, 1);
+  assertEquals(row?.bot_score_detail, '{"pow":30}');
   await db.close();
 });

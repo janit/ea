@@ -11,8 +11,10 @@
 // Feeds:
 //   1. monperrus/crawler-user-agents  — 600+ crawler UA regex patterns → +30
 //   2. ai-robots-txt/robots.json      — 130+ AI bot names             → +40
-//   3. AWS ip-ranges.json             — datacenter IPv4+IPv6 CIDRs     → +15
-//   4. GCP cloud.json                 — datacenter IPv4+IPv6 CIDRs     → +15
+//   3. AWS ip-ranges.json             — datacenter IPv4+IPv6 CIDRs     → +24
+//   4. GCP cloud.json                 — datacenter IPv4+IPv6 CIDRs     → +24
+//   5. DigitalOcean geofeed CSV       — datacenter IPv4+IPv6 CIDRs     → +24
+//   6. Oracle Cloud public_ip_ranges  — datacenter IPv4+IPv6 CIDRs     → +24
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -25,6 +27,9 @@ const AI_ROBOTS_URL =
   "https://raw.githubusercontent.com/ai-robots-txt/ai.robots.txt/main/robots.json";
 const AWS_IP_URL = "https://ip-ranges.amazonaws.com/ip-ranges.json";
 const GCP_IP_URL = "https://www.gstatic.com/ipranges/cloud.json";
+const DO_IP_URL = "https://www.digitalocean.com/geo/google.csv";
+const OCI_IP_URL =
+  "https://docs.oracle.com/en-us/iaas/tools/public_ip_ranges.json";
 
 // ── In-memory state ─────────────────────────────────────────────────────────
 
@@ -37,12 +42,17 @@ let crawlerPatternCount = 0;
 let aiCrawlerNameCount = 0;
 let dcRangeCount = 0;
 
-// Per-feed raw CIDR counts, retained across refreshes so a single upstream
-// failure doesn't silently erase the other feed's ranges.
-let awsV4Ranges: [number, number][] = [];
-let awsV6Ranges: [bigint, bigint][] = [];
-let gcpV4Ranges: [number, number][] = [];
-let gcpV6Ranges: [bigint, bigint][] = [];
+type DcRanges = { v4: [number, number][]; v6: [bigint, bigint][] };
+const noRanges = (): DcRanges => ({ v4: [], v6: [] });
+
+// Raw ranges per provider, retained across refreshes so one upstream failure
+// does not erase another provider's data.
+const dcFeeds: Record<"aws" | "gcp" | "digitalocean" | "oracle", DcRanges> = {
+  aws: noRanges(),
+  gcp: noRanges(),
+  digitalocean: noRanges(),
+  oracle: noRanges(),
+};
 
 // ── Public matchers ─────────────────────────────────────────────────────────
 
@@ -56,7 +66,7 @@ export function matchesAiCrawlerFeed(ua: string): boolean {
   return aiCrawlerRegex !== null && aiCrawlerRegex.test(ua);
 }
 
-/** True if the IP address falls within a known cloud provider CIDR (AWS/GCP). */
+/** True if the IP address falls within a known cloud provider CIDR (AWS, GCP, DigitalOcean, Oracle). */
 export function isDatacenterIp(ip: string): boolean {
   // Normalize IPv4-mapped IPv6 (::ffff:a.b.c.d and ::a.b.c.d) to plain IPv4
   // so dual-stack deployments still match the IPv4 CIDR list.
@@ -336,110 +346,145 @@ async function refreshAiCrawlers(): Promise<void> {
   }
 }
 
-/** Fetch AWS + GCP IP ranges and build merged interval lists (v4 + v6). */
-async function refreshDatacenterIps(): Promise<void> {
-  // AWS
-  let awsOk = false;
-  const newAwsV4: [number, number][] = [];
-  const newAwsV6: [bigint, bigint][] = [];
+async function fetchText(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const data = await fetchJson(AWS_IP_URL) as {
-      prefixes?: { ip_prefix: string }[];
-      ipv6_prefixes?: { ipv6_prefix: string }[];
-    };
-    if (Array.isArray(data?.prefixes)) {
-      for (const p of data.prefixes) {
-        const range = parseCidrV4(p.ip_prefix);
-        if (range) newAwsV4.push(range);
-      }
-    }
-    if (Array.isArray(data?.ipv6_prefixes)) {
-      for (const p of data.ipv6_prefixes) {
-        const range = parseCidrV6(p.ipv6_prefix);
-        if (range) newAwsV6.push(range);
-      }
-    }
-    awsOk = newAwsV4.length > 0 || newAwsV6.length > 0;
-  } catch (e) {
-    console.warn("[echelon] threat-feeds: failed to fetch AWS IP ranges:", e);
-  }
-
-  // GCP
-  let gcpOk = false;
-  const newGcpV4: [number, number][] = [];
-  const newGcpV6: [bigint, bigint][] = [];
-  try {
-    const data = await fetchJson(GCP_IP_URL) as {
-      prefixes?: { ipv4Prefix?: string; ipv6Prefix?: string }[];
-    };
-    if (Array.isArray(data?.prefixes)) {
-      for (const p of data.prefixes) {
-        if (p.ipv4Prefix) {
-          const range = parseCidrV4(p.ipv4Prefix);
-          if (range) newGcpV4.push(range);
-        }
-        if (p.ipv6Prefix) {
-          const range = parseCidrV6(p.ipv6Prefix);
-          if (range) newGcpV6.push(range);
-        }
-      }
-    }
-    gcpOk = newGcpV4.length > 0 || newGcpV6.length > 0;
-  } catch (e) {
-    console.warn("[echelon] threat-feeds: failed to fetch GCP IP ranges:", e);
-  }
-
-  // Per-feed sanity check: a single feed shrinking to <10% of its prior
-  // size (non-empty) is almost certainly a feed corruption — keep the old
-  // data for that feed only.
-  if (awsOk) {
-    const prior = awsV4Ranges.length + awsV6Ranges.length;
-    const next = newAwsV4.length + newAwsV6.length;
-    if (prior > 0 && next < prior * 0.1) {
-      console.warn(
-        `[echelon] threat-feeds: AWS feed shrank from ${prior} to ${next} ranges — keeping old data`,
-      );
-    } else {
-      awsV4Ranges = newAwsV4;
-      awsV6Ranges = newAwsV6;
-    }
-  }
-  if (gcpOk) {
-    const prior = gcpV4Ranges.length + gcpV6Ranges.length;
-    const next = newGcpV4.length + newGcpV6.length;
-    if (prior > 0 && next < prior * 0.1) {
-      console.warn(
-        `[echelon] threat-feeds: GCP feed shrank from ${prior} to ${next} ranges — keeping old data`,
-      );
-    } else {
-      gcpV4Ranges = newGcpV4;
-      gcpV6Ranges = newGcpV6;
-    }
-  }
-
-  // Rebuild the merged lookup tables from the retained per-feed ranges.
-  const combinedV4 = [...awsV4Ranges, ...gcpV4Ranges];
-  const combinedV6 = [...awsV6Ranges, ...gcpV6Ranges];
-  if (combinedV4.length > 0) {
-    dcRangesV4 = mergeRanges(combinedV4);
-  }
-  if (combinedV6.length > 0) {
-    dcRangesV6 = mergeRangesV6(combinedV6);
-  }
-  dcRangeCount = dcRangesV4.length + dcRangesV6.length;
-
-  const totalRaw = combinedV4.length + combinedV6.length;
-  if (totalRaw > 0) {
-    console.log(
-      `[echelon] threat-feeds: loaded ${totalRaw} datacenter CIDRs (aws=${
-        awsV4Ranges.length + awsV6Ranges.length
-      }, gcp=${
-        gcpV4Ranges.length + gcpV6Ranges.length
-      }) → ${dcRangeCount} merged ranges (${dcRangesV4.length} v4, ${dcRangesV6.length} v6)`,
-    );
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.text();
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+/**
+ * Sort a CIDR string into the right family. Anything unparseable is skipped,
+ * never widened: a feed entry must be a bare address, "/", and a decimal
+ * prefix length of 1 or more. A /0 would flag every visitor as a datacenter.
+ */
+function addCidr(into: DcRanges, cidr: unknown): void {
+  if (typeof cidr !== "string") return;
+  const c = cidr.trim();
+  if (!/^[0-9a-fA-F:.]+\/[1-9]\d{0,2}$/.test(c)) return;
+  if (c.includes(":")) {
+    const r = parseCidrV6(c);
+    if (r) into.v6.push(r);
+  } else {
+    const r = parseCidrV4(c);
+    if (r) into.v4.push(r);
+  }
+}
+
+/** DigitalOcean publishes a geofeed CSV: cidr,country,region,city,postal. */
+function parseDigitalOceanCsv(text: string): DcRanges {
+  const out = noRanges();
+  for (const line of text.split("\n")) {
+    addCidr(out, line.split(",")[0]);
+  }
+  return out;
+}
+
+/** Oracle Cloud: { regions: [{ cidrs: [{ cidr }] }] }. */
+function parseOracleJson(data: unknown): DcRanges {
+  const out = noRanges();
+  const regions = (data as { regions?: unknown } | null)?.regions;
+  if (!Array.isArray(regions)) return out;
+  for (const region of regions) {
+    const cidrs = (region as { cidrs?: unknown } | null)?.cidrs;
+    if (!Array.isArray(cidrs)) continue;
+    for (const entry of cidrs) {
+      addCidr(out, (entry as { cidr?: unknown } | null)?.cidr);
+    }
+  }
+  return out;
+}
+
+/**
+ * Decide whether a provider's fresh ranges replace what we hold. An empty
+ * result, or one under 10% of the prior size, is almost certainly a broken
+ * or truncated response: keep the old data for that provider.
+ */
+function adoptFeed(name: string, prior: DcRanges, next: DcRanges): DcRanges {
+  const priorSize = prior.v4.length + prior.v6.length;
+  const nextSize = next.v4.length + next.v6.length;
+  if (nextSize === 0) return prior;
+  if (priorSize > 0 && nextSize < priorSize * 0.1) {
+    console.warn(
+      `[echelon] threat-feeds: ${name} feed shrank from ${priorSize} to ${nextSize} ranges — keeping old data`,
+    );
+    return prior;
+  }
+  return next;
+}
+
+/** Fetch each provider's IP ranges and rebuild the merged lookup tables. */
+async function refreshDatacenterIps(): Promise<void> {
+  const loaders: Record<keyof typeof dcFeeds, () => Promise<DcRanges>> = {
+    aws: async () => {
+      const data = await fetchJson(AWS_IP_URL) as {
+        prefixes?: { ip_prefix: string }[];
+        ipv6_prefixes?: { ipv6_prefix: string }[];
+      };
+      const out = noRanges();
+      if (Array.isArray(data?.prefixes)) {
+        for (const p of data.prefixes) addCidr(out, p?.ip_prefix);
+      }
+      if (Array.isArray(data?.ipv6_prefixes)) {
+        for (const p of data.ipv6_prefixes) addCidr(out, p?.ipv6_prefix);
+      }
+      return out;
+    },
+    gcp: async () => {
+      const data = await fetchJson(GCP_IP_URL) as {
+        prefixes?: { ipv4Prefix?: string; ipv6Prefix?: string }[];
+      };
+      const out = noRanges();
+      if (Array.isArray(data?.prefixes)) {
+        for (const p of data.prefixes) {
+          addCidr(out, p?.ipv4Prefix);
+          addCidr(out, p?.ipv6Prefix);
+        }
+      }
+      return out;
+    },
+    digitalocean: async () => parseDigitalOceanCsv(await fetchText(DO_IP_URL)),
+    oracle: async () => parseOracleJson(await fetchJson(OCI_IP_URL)),
+  };
+
+  // Providers are independent: fetch together, and a failure in one leaves
+  // its previous ranges in place.
+  await Promise.all(
+    (Object.keys(loaders) as (keyof typeof dcFeeds)[]).map(async (name) => {
+      try {
+        dcFeeds[name] = adoptFeed(name, dcFeeds[name], await loaders[name]());
+      } catch (e) {
+        console.warn(
+          `[echelon] threat-feeds: failed to fetch ${name} IP ranges:`,
+          e,
+        );
+      }
+    }),
+  );
+
+  // Rebuild the merged lookup tables from the retained per-provider ranges.
+  const all = Object.values(dcFeeds);
+  const combinedV4 = all.flatMap((f) => f.v4);
+  const combinedV6 = all.flatMap((f) => f.v6);
+  if (combinedV4.length > 0) dcRangesV4 = mergeRanges(combinedV4);
+  if (combinedV6.length > 0) dcRangesV6 = mergeRangesV6(combinedV6);
+  dcRangeCount = dcRangesV4.length + dcRangesV6.length;
+
+  if (combinedV4.length + combinedV6.length > 0) {
+    const sizes = Object.entries(dcFeeds)
+      .map(([name, f]) => `${name}=${f.v4.length + f.v6.length}`)
+      .join(", ");
+    console.log(
+      `[echelon] threat-feeds: loaded datacenter CIDRs (${sizes}) → ` +
+        `${dcRangeCount} merged ranges (${dcRangesV4.length} v4, ${dcRangesV6.length} v6)`,
+    );
+  }
+}
 /** Refresh all feeds. Errors in one feed don't block others. */
 async function refreshAll(): Promise<void> {
   await Promise.allSettled([
@@ -485,15 +530,15 @@ export function stopThreatFeeds(): void {
   aiCrawlerRegex = null;
   dcRangesV4 = [];
   dcRangesV6 = [];
-  awsV4Ranges = [];
-  awsV6Ranges = [];
-  gcpV4Ranges = [];
-  gcpV6Ranges = [];
+  for (const name of Object.keys(dcFeeds) as (keyof typeof dcFeeds)[]) {
+    dcFeeds[name] = noRanges();
+  }
   dcRangeCount = 0;
 }
 
 // ── Exported for testing ────────────────────────────────────────────────────
 export {
+  adoptFeed as _adoptFeed,
   binarySearchRanges as _binarySearchRanges,
   binarySearchRangesV6 as _binarySearchRangesV6,
   ipv4ToNum as _ipv4ToNum,
@@ -502,4 +547,7 @@ export {
   mergeRangesV6 as _mergeRangesV6,
   parseCidrV4 as _parseCidrV4,
   parseCidrV6 as _parseCidrV6,
+  parseDigitalOceanCsv as _parseDigitalOceanCsv,
+  parseOracleJson as _parseOracleJson,
 };
+export type { DcRanges };

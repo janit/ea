@@ -21,8 +21,13 @@ export const handler = define.handlers({
 
     const vid = visitor_id.slice(0, 128);
     const lbl = typeof label === "string" ? label.slice(0, 256) : null;
+    // An operator's exclusion takes over one the session classifier wrote
+    // (`auto:<reason>`): left with that label it would be removed after 30
+    // days by purgeAutoExclusions. An existing manual one keeps its label.
     await ctx.state.db.run(
-      `INSERT OR IGNORE INTO excluded_visitors (visitor_id, label) VALUES (?, ?)`,
+      `INSERT INTO excluded_visitors (visitor_id, label) VALUES (?, ?)
+       ON CONFLICT(visitor_id) DO UPDATE SET label = excluded.label
+        WHERE excluded_visitors.label LIKE 'auto:%'`,
       vid,
       lbl,
     );

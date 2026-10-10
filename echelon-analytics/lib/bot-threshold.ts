@@ -31,3 +31,16 @@ export const BOT_SQL = botSql();
 export function isBotScore(score: number): boolean {
   return score >= BOT_THRESHOLD;
 }
+
+/**
+ * Score stamped onto rows the session classifier proves are bots. Above the
+ * threshold so every query that reads bot_score excludes them at once.
+ */
+export const BOT_EXCLUDE_SCORE = 60;
+
+/**
+ * Score stamped by strict engagement mode onto sessions that landed, did
+ * nothing and left. Exactly the threshold, not the 60 band: these are not
+ * proven bots, only proven to have done nothing.
+ */
+export const NO_ENGAGEMENT_SCORE = BOT_THRESHOLD;

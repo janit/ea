@@ -2,16 +2,26 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { SqliteAdapter } from "@/lib/db/sqlite-adapter.ts";
-import { SCHEMA_SQL } from "@/lib/db/schema.ts";
+import { SCHEMA_SQL, VALIDATED_VISITOR_INDEX_SQL } from "@/lib/db/schema.ts";
 import type { DbAdapter } from "@/lib/db/adapter.ts";
 
-/** Create an in-memory SQLite database with the full schema applied. */
+/**
+ * Create an in-memory SQLite database with the full schema applied, plus the
+ * two indexes over `validated` that only migrate() creates (exact DDL from
+ * lib/db/database.ts): lib/proven-human.ts names them and fails without.
+ */
 export function createTestDb(): DbAdapter {
   const raw = new DatabaseSync(":memory:");
   raw.exec("PRAGMA journal_mode = WAL");
   raw.exec("PRAGMA foreign_keys = ON");
   const db = new SqliteAdapter(raw);
   raw.exec(SCHEMA_SQL);
+  raw.exec(
+    `CREATE INDEX IF NOT EXISTS idx_vv_validated
+     ON visitor_views(site_id, session_id, visitor_id)
+     WHERE validated = 1`,
+  );
+  raw.exec(VALIDATED_VISITOR_INDEX_SQL);
   return db;
 }
 
@@ -54,6 +64,8 @@ export interface ViewOverrides {
   utm_content?: string | null;
   utm_term?: string | null;
   created_at?: string;
+  bot_score_detail?: string | null;
+  validated?: number;
 }
 
 export async function insertView(
@@ -77,6 +89,8 @@ export async function insertView(
     referrer: null,
     referrer_type: "direct_or_unknown",
     bot_score: 0,
+    bot_score_detail: null as string | null,
+    validated: 0,
     is_pwa: 0,
     utm_source: null,
     utm_medium: null,
@@ -92,8 +106,9 @@ export async function insertView(
        screen_width, screen_height, device_type, os_name, browser_name, browser_version,
        country_code,
        is_returning, referrer, referrer_type, bot_score, is_pwa,
-       utm_source, utm_medium, utm_campaign, utm_content, utm_term, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       utm_source, utm_medium, utm_campaign, utm_content, utm_term, created_at,
+       bot_score_detail, validated)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     v.visitor_id,
     v.path,
     v.site_id,
@@ -117,6 +132,8 @@ export async function insertView(
     v.utm_content,
     v.utm_term,
     v.created_at,
+    v.bot_score_detail,
+    v.validated,
   );
 }
 
@@ -136,6 +153,7 @@ export interface EventOverrides {
   day_of_week?: number;
   is_returning?: number;
   bot_score?: number;
+  bot_score_detail?: string | null;
   created_at?: string;
 }
 
@@ -159,6 +177,7 @@ export async function insertEvent(
     day_of_week: 1,
     is_returning: 0,
     bot_score: 0,
+    bot_score_detail: null as string | null,
     created_at: new Date().toISOString(),
     ...overrides,
   };
@@ -167,8 +186,8 @@ export async function insertEvent(
       (event_type, site_id, session_id, visitor_id, data,
        experiment_id, variant_id, utm_campaign,
        device_type, referrer, hour, month, day_of_week,
-       is_returning, bot_score, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       is_returning, bot_score, created_at, bot_score_detail)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     e.event_type,
     e.site_id,
     e.session_id,
@@ -185,6 +204,7 @@ export async function insertEvent(
     e.is_returning,
     e.bot_score,
     e.created_at,
+    e.bot_score_detail,
   );
 }
 

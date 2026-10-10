@@ -13,6 +13,53 @@
 // migrate() exists to upgrade, aborting before it could run. DatabaseSync.exec
 // is not atomic either, so the statements before the failure stayed committed.
 import { CLEAN_SQL } from "../bot-threshold.ts";
+import { INTERACTION_SQL_LIST } from "../event-classes.ts";
+
+/**
+ * The clean interaction events, keyed for the engagement gate's two lookups:
+ * "any in this session" (site_id, session_id) and "any by this sessionless
+ * visitor near this time" (site_id, session_id IS NULL, visitor_id,
+ * created_at). Partial, so a lookup never steps over a row that does not
+ * count: one session or visitor id can hold thousands of passive or
+ * bot-scored events, and a lookup that walked them once per row judged
+ * blocked the process for seconds. Only gestures pay for it on insert.
+ *
+ * SQLite uses a partial index only for queries repeating its WHERE clause, so
+ * migrate() rebuilds it when the threshold or the event list has changed.
+ * All of its columns are in the original table (see the note above).
+ */
+export const CLEAN_INTERACTION_SQL =
+  `${CLEAN_SQL} AND event_type IN (${INTERACTION_SQL_LIST})`;
+export const CLEAN_INTERACTION_INDEX_SQL =
+  `CREATE INDEX IF NOT EXISTS idx_se_clean_interaction
+    ON semantic_events(site_id, session_id, visitor_id, created_at)
+    WHERE ${CLEAN_INTERACTION_SQL}`;
+
+/**
+ * The same events keyed for the lookup anonymised sites need: "any by this
+ * visitor near this time", whatever session id the event carries. On those
+ * sites the stored session id is one of 50 names shared by unrelated visits,
+ * so it cannot be part of the key, and the index above cannot answer the
+ * question without stepping over every session name. One more entry per
+ * clean gesture on insert, on every site. Rebuilt by migrate() like the
+ * index above.
+ */
+export const CLEAN_INTERACTION_VISITOR_INDEX_SQL =
+  `CREATE INDEX IF NOT EXISTS idx_se_clean_interaction_visitor
+    ON semantic_events(site_id, visitor_id, created_at)
+    WHERE ${CLEAN_INTERACTION_SQL}`;
+
+/**
+ * "Does this visitor own a validated view", whatever its session id: the
+ * engagement gate on anonymised sites, and the proven-human check. Costs
+ * nothing on insert (views are written with validated = 0). Over a column
+ * migrate() adds, so migrate() creates it and SCHEMA_SQL does not.
+ */
+export const VALIDATED_VISITOR_INDEX_SQL =
+  `CREATE INDEX IF NOT EXISTS idx_vv_validated_visitor
+    ON visitor_views(site_id, visitor_id)
+    WHERE validated = 1`;
+
 export const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS visitor_views (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +80,7 @@ export const SCHEMA_SQL = `
     referrer_type TEXT,
     bot_score INTEGER NOT NULL DEFAULT 0,
     bot_score_detail TEXT,
+    validated INTEGER NOT NULL DEFAULT 0,
     is_pwa INTEGER NOT NULL DEFAULT 0,
     utm_source TEXT,
     utm_medium TEXT,
@@ -95,6 +143,9 @@ export const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_se_site_type_created ON semantic_events(site_id, event_type, created_at);
   CREATE INDEX IF NOT EXISTS idx_se_visitor           ON semantic_events(visitor_id);
   CREATE INDEX IF NOT EXISTS idx_se_created_bot       ON semantic_events(created_at, bot_score);
+  ${CLEAN_INTERACTION_INDEX_SQL};
+  ${CLEAN_INTERACTION_VISITOR_INDEX_SQL};
+
   CREATE TABLE IF NOT EXISTS excluded_visitors (
     visitor_id TEXT PRIMARY KEY,
     label TEXT,
@@ -163,6 +214,8 @@ export const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS site_settings (
     site_id TEXT PRIMARY KEY,
     consent_css TEXT,
+    home_country TEXT,
+    home_language TEXT,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
 

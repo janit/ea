@@ -6,6 +6,7 @@
 
 import {
   BEHIND_CLOUDFLARE,
+  BOT_SCORE_WEIGHTS_RAW,
   BOT_UA_PATTERNS,
   SITE_SUSPECT_COUNTRIES,
   SUSPECT_COUNTRIES,
@@ -13,6 +14,88 @@ import {
   TRUST_GEO_HEADERS,
 } from "./config.ts";
 import type { BotScoreSignals } from "../types.ts";
+import { isCountryMismatch, isCrossContinent, isGlobalCommon } from "./geo.ts";
+
+// ── Signal weights ──────────────────────────────────────────────────────────
+// Every write-time weight in one place. Several of these were calibrated on a
+// consumer travel site's traffic; an operator with a different audience (a
+// developer site sees far more Linux desktops) can override any entry with
+// ECHELON_BOT_SCORE_WEIGHTS="linux_desktop:0,datacenter_ip:40".
+//
+// datacenter_ip must stay at 20 or more: a missing PoW token is 30, and a
+// cloud-hosted client that sends no token has to cross the threshold on those
+// two signals alone.
+//
+// win_tablet_mismatch, cross_site and datacenter_ip are one point short of
+// the round number on purpose. Each is something an ordinary visitor can
+// carry (a scaled laptop display, two sibling sites in one sitting, a cloud
+// VPN), and a visitor who then reads without clicking gets the engagement
+// gate's no_events 15 on top: at 35 that landed exactly on the threshold of
+// 50. The same goes for datacenter_ip + timing_fast + referrer, and for
+// datacenter_ip + linux_desktop + no_events. Keep the sums under it.
+
+export const DEFAULT_WEIGHTS = {
+  timing_fast: 20,
+  timing_quick: 8,
+  burst: 25,
+  no_accept_language: 10,
+  no_sec_headers: 10,
+  screen: 10,
+  referrer: 5,
+  crawler_feed: 30,
+  ai_crawler_feed: 40,
+  datacenter_ip: 24,
+  win_tablet_mismatch: 34,
+  linux_desktop: 10,
+  cross_site: 34,
+  country_mismatch: 15,
+  cross_continent: 8,
+  global_common_foreign: 15,
+  linux_foreign: 30,
+  stale_android_foreign: 40,
+} as const;
+
+export type WeightKey = keyof typeof DEFAULT_WEIGHTS;
+
+/**
+ * Apply "key:points,key:points" overrides to the defaults. An entry is
+ * accepted when the key exists and the value is a number from 0 to 100
+ * (fractions are truncated). Anything else is skipped with a warning; a typo
+ * in an environment variable must not stop the server or silently zero a
+ * signal.
+ */
+export function parseWeightOverrides(
+  raw: string,
+): { weights: Record<WeightKey, number>; warnings: string[] } {
+  const weights: Record<WeightKey, number> = { ...DEFAULT_WEIGHTS };
+  const warnings: string[] = [];
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const [key, value] = trimmed.split(":").map((s) => s.trim());
+    const points = Number(value);
+    if (!key || !Object.hasOwn(DEFAULT_WEIGHTS, key)) {
+      warnings.push(`unknown weight "${trimmed}"`);
+    } else if (
+      value === undefined || value === "" || !Number.isFinite(points) ||
+      points < 0 || points > 100
+    ) {
+      warnings.push(`invalid value in "${trimmed}" (expected 0-100)`);
+    } else {
+      weights[key as WeightKey] = Math.trunc(points);
+    }
+  }
+  return { weights, warnings };
+}
+
+const parsedWeights = parseWeightOverrides(BOT_SCORE_WEIGHTS_RAW);
+for (const w of parsedWeights.warnings) {
+  console.warn(`[echelon] ECHELON_BOT_SCORE_WEIGHTS: ignoring ${w}`);
+}
+
+/** The weights in effect for this process. */
+export const WEIGHTS: Readonly<Record<WeightKey, number>> =
+  parsedWeights.weights;
 
 /** Returns true if the UA matches a known bot pattern. These should not be tracked at all. */
 export function isKnownBot(ua: string | undefined): boolean {
@@ -65,6 +148,7 @@ function getHmacKey(): Promise<CryptoKey> {
   // preserve them, but a stable IP hash is exactly what the rotation exists to
   // prevent.
   burstMap.clear();
+  crossSiteMap.clear();
   suspectedBotIps.clear();
   confirmedBotIps.clear();
   return hmacKeyPromise;
@@ -221,6 +305,75 @@ function pruneBurstMap(): void {
   }
 }
 
+// ── Cross-site detection ────────────────────────────────────────────────────
+// A person visits one site. A crawler working through an instance's sites
+// hits several from the same address within the hour.
+
+interface CrossSiteEntry {
+  sites: Set<string>;
+  windowStart: number;
+}
+
+const CROSS_SITE_WINDOW_MS = 60 * 60 * 1000;
+const CROSS_SITE_THRESHOLD = 3;
+const MAX_CROSS_SITE_MAP_SIZE = 100_000;
+/** One entry cannot hold more sites than this (bounds memory per IP). */
+const MAX_SITES_PER_ENTRY = 16;
+const crossSiteMap = new Map<string, CrossSiteEntry>();
+
+function pruneCrossSiteMap(now: number): void {
+  for (const [key, entry] of crossSiteMap) {
+    if (now - entry.windowStart > CROSS_SITE_WINDOW_MS) {
+      crossSiteMap.delete(key);
+    }
+  }
+}
+
+/**
+ * Map key: IP hash plus a short hash of the user agent, so different browsers
+ * behind one address (office, CGNAT) are counted separately.
+ */
+function crossSiteKey(ipHash: string, userAgent: string): string {
+  const ua = userAgent.slice(0, 512);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < ua.length; i++) {
+    h = Math.imul(h ^ ua.charCodeAt(i), 0x01000193);
+  }
+  return `${ipHash}|${(h >>> 0).toString(36)}`;
+}
+
+/**
+ * Record a pageview on `siteId` from `ipHash` + `userAgent`; returns distinct
+ * sites seen. Callers must not record when the client address is unresolved.
+ */
+export function recordSiteVisit(
+  ipHash: string,
+  siteId: string,
+  userAgent = "",
+): number {
+  const now = Date.now();
+  if (crossSiteMap.size > MAX_CROSS_SITE_MAP_SIZE) {
+    pruneCrossSiteMap(now);
+    if (crossSiteMap.size > MAX_CROSS_SITE_MAP_SIZE) return 1; // degrade
+  }
+  const key = crossSiteKey(ipHash, userAgent);
+  const entry = crossSiteMap.get(key);
+  if (!entry || now - entry.windowStart > CROSS_SITE_WINDOW_MS) {
+    crossSiteMap.set(key, { sites: new Set([siteId]), windowStart: now });
+    return 1;
+  }
+  if (entry.sites.size < MAX_SITES_PER_ENTRY) entry.sites.add(siteId);
+  return entry.sites.size;
+}
+
+/** Distinct sites seen from this address and user agent in the window, without recording. */
+export function getCrossSiteCount(ipHash: string, userAgent = ""): number {
+  const entry = crossSiteMap.get(crossSiteKey(ipHash, userAgent));
+  if (!entry) return 0;
+  if (Date.now() - entry.windowStart > CROSS_SITE_WINDOW_MS) return 0;
+  return entry.sites.size;
+}
+
 // ── Cloudflare integration ───────────────────────────────────────────────────
 
 /**
@@ -295,9 +448,9 @@ export function computeBotScoreWithDetail(
   // Low interaction time — beacon gate is 800ms (skip for SPA navigations)
   if (signals.interactionMs !== undefined && !signals.isSpaNav) {
     if (signals.interactionMs < 850) {
-      detail.timing = 20;
+      detail.timing = WEIGHTS.timing_fast;
     } else if (signals.interactionMs < 1000) {
-      detail.timing = 8;
+      detail.timing = WEIGHTS.timing_quick;
     }
   }
 
@@ -321,16 +474,16 @@ export function computeBotScoreWithDetail(
 
   // Burst detection
   if (signals.burstCount > BURST_THRESHOLD) {
-    detail.burst = 25;
+    detail.burst = WEIGHTS.burst;
   }
 
   // Missing Accept-Language or missing both Sec-CH-UA AND Sec-Fetch-Site
   let headerPenalty = 0;
   if (!signals.hasAcceptLanguage) {
-    headerPenalty += 10;
+    headerPenalty += WEIGHTS.no_accept_language;
   }
   if (!signals.hasSecChUa && !signals.hasSecFetchSite) {
-    headerPenalty += 10;
+    headerPenalty += WEIGHTS.no_sec_headers;
   }
   if (headerPenalty > 0) detail.headers = headerPenalty;
 
@@ -341,7 +494,7 @@ export function computeBotScoreWithDetail(
     const w = signals.screenWidth ?? 0;
     const h = signals.screenHeight ?? 0;
     if (w <= 0 || w > 10000 || h <= 0 || h > 10000) {
-      detail.screen = 10;
+      detail.screen = WEIGHTS.screen;
     }
   }
 
@@ -352,14 +505,83 @@ export function computeBotScoreWithDetail(
   ) {
     const segments = signals.path.split("/").filter(Boolean);
     if (segments.length >= 2) {
-      detail.referrer = 5;
+      detail.referrer = WEIGHTS.referrer;
+    }
+  }
+
+  // ── Device signals ────────────────────────────────────────────────────────
+  // The UA is attacker-controlled and unbounded; only the first 512 chars are
+  // looked at.
+  const ua = (signals.userAgent ?? "").slice(0, 512);
+  const isLinuxDesktop = /Linux/i.test(ua) && !/Android/i.test(ua);
+  const androidMajor = ua.match(/Android (\d{1,2})/i);
+  const isStaleAndroid = !!androidMajor && parseInt(androidMajor[1], 10) <= 6;
+
+  // A plain "Windows NT" UA at a tablet-range width. Real Windows tablets
+  // report HiDPI widths above 1024; this pairing is what a bot farm reusing a
+  // desktop UA on a small headless viewport produces.
+  const isWinTablet = /Windows NT/i.test(ua) &&
+    signals.screenWidth !== undefined &&
+    signals.screenWidth >= 768 && signals.screenWidth <= 1024;
+  if (isWinTablet) detail.win_tablet_mismatch = WEIGHTS.win_tablet_mismatch;
+
+  // Weak alone: real Linux desktop users exist, and are common on technical
+  // sites (override the weight to 0 there). A pageview signal only: on the
+  // events endpoint an invalid token is 40, and the two together would
+  // discard the events of a real session whose token went stale.
+  if (isLinuxDesktop && signals.surface !== "events") {
+    detail.linux_desktop = WEIGHTS.linux_desktop;
+  }
+
+  // One address on three or more of this instance's sites within the hour.
+  if ((signals.crossSiteCount ?? 0) >= CROSS_SITE_THRESHOLD) {
+    detail.cross_site = WEIGHTS.cross_site;
+  }
+
+  // ── Geography signals — only for a site that declared a home country ──────
+  const home = signals.homeCountry;
+  const visitor = signals.visitorCountry;
+  if (home && visitor) {
+    const mismatch = isCountryMismatch(visitor, home, signals.homeLanguage);
+    if (mismatch) detail.country_mismatch = WEIGHTS.country_mismatch;
+
+    // Small on purpose: diaspora and English-language traffic is routinely
+    // cross-continent. It fills the gap where country_mismatch is exempted.
+    if (isCrossContinent(visitor, home)) {
+      detail.cross_continent = WEIGHTS.cross_continent;
+    }
+
+    // The combinations below all need a "global-common" country (US, CA, IN
+    // …) that is not the site's own: the location bot farms claim because it
+    // is unremarkable everywhere.
+    const commonForeign = isGlobalCommon(visitor) &&
+      visitor.toUpperCase() !== home.toUpperCase();
+
+    if (isWinTablet && commonForeign) {
+      detail.global_common_foreign = WEIGHTS.global_common_foreign;
+    }
+    // These two additionally need country_mismatch, which only fires for
+    // global-common countries on NON-English sites — so US traffic on an
+    // English-language site is untouched.
+    if (isLinuxDesktop && mismatch && commonForeign) {
+      detail.linux_foreign = WEIGHTS.linux_foreign;
+    }
+    if (isStaleAndroid && mismatch && commonForeign) {
+      detail.stale_android_foreign = WEIGHTS.stale_android_foreign;
     }
   }
 
   // Threat feed matches (async-refreshed, checked synchronously)
-  if (signals.crawlerFeedMatch) detail.crawler_feed = 30;
-  if (signals.aiCrawlerFeedMatch) detail.ai_crawler_feed = 40;
-  if (signals.datacenterIp) detail.datacenter_ip = 15;
+  if (signals.crawlerFeedMatch) detail.crawler_feed = WEIGHTS.crawler_feed;
+  if (signals.aiCrawlerFeedMatch) {
+    detail.ai_crawler_feed = WEIGHTS.ai_crawler_feed;
+  }
+  if (signals.datacenterIp) detail.datacenter_ip = WEIGHTS.datacenter_ip;
+
+  // A weight overridden to 0 means "signal off": do not record it.
+  for (const k of Object.keys(detail)) {
+    if (detail[k] === 0) delete detail[k];
+  }
 
   const score = Math.min(
     Object.values(detail).reduce((sum, v) => sum + v, 0),

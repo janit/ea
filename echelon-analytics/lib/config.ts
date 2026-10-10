@@ -25,12 +25,25 @@ export const SUSPECT_COUNTRIES = new Set(
 export const SUSPECT_POINTS =
   parseInt(Deno.env.get("ECHELON_SUSPECT_POINTS") ?? "", 10) || 30;
 
+// Per-signal bot score weight overrides — "key:points,key:points".
+// Keys and defaults: DEFAULT_WEIGHTS in bot-score.ts. Parsed there.
+export const BOT_SCORE_WEIGHTS_RAW =
+  Deno.env.get("ECHELON_BOT_SCORE_WEIGHTS") ??
+    "";
+
 // Bot score threshold — views/events with score >= this are discarded entirely (not stored).
 // Default 50 = drop definitive bots. Set to 0 to store everything (filter in rollups only).
 export const BOT_DISCARD_THRESHOLD = parseInt(
   Deno.env.get("ECHELON_BOT_DISCARD_THRESHOLD") ?? "50",
   10,
 );
+
+// Strict engagement: a session that never produces an interaction event stops
+// counting as human (its score is moved to the threshold 30 minutes in).
+// Off by default — on a content site, people who read and leave are real
+// visitors, and that is a product decision for the operator to make.
+export const REQUIRE_ENGAGEMENT =
+  Deno.env.get("ECHELON_REQUIRE_ENGAGEMENT") === "true";
 
 // Challenge PoW — how many past minutes of challenges to accept as valid.
 // With max-age=300 (5 min) on /ea.js, 10 min covers cache TTL + clock skew.

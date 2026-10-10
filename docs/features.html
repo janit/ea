@@ -67,6 +67,13 @@
 <p>Basic embed — add to any HTML page:</p>
 <pre>&lt;script async src="https://your-host/ea.js" data-site="my-site"&gt;&lt;/script&gt;</pre>
 
+<h3>Content Security Policy</h3>
+<p>If your site sends a <code>Content-Security-Policy</code> header, it must let the tracker reach your Echelon host: the host in <code>script-src</code> (to load <code>/ea.js</code>), in <code>img-src</code> (the <code>/b.gif</code> pixel) and in <code>connect-src</code> (for <code>/c</code> and <code>/e</code>), plus <code>'wasm-unsafe-eval'</code> in <code>script-src</code> so the proof-of-work module can run:</p>
+<pre>script-src 'self' https://your-host 'wasm-unsafe-eval';
+connect-src 'self' https://your-host;
+img-src 'self' https://your-host</pre>
+<p>Without <code>'wasm-unsafe-eval'</code> the tracker still works but sends no token, so its requests carry the +30 missing-token penalty instead of being discarded at ingest. A view with no token and no interaction is later raised to the bot threshold by the engagement gate (see <a href="bot-defense.html">Bot Defense</a>).</p>
+
 <h2>Script Attributes</h2>
 <table>
 <tr><th>Attribute</th><th>Description</th></tr>
