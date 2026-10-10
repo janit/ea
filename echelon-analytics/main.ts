@@ -22,6 +22,7 @@ import {
 } from "./lib/session-classifier.ts";
 import { startThreatFeeds, stopThreatFeeds } from "./lib/threat-feeds.ts";
 import { recordRequest } from "./lib/request-stats.ts";
+import { createFastPath } from "./lib/fast-path.ts";
 import { pruneSessions } from "./lib/session.ts";
 import { refreshUtmCampaigns } from "./lib/utm.ts";
 import { AUTH_USERNAME, SECRET, SHUTDOWN_TIMEOUT_MS } from "./lib/config.ts";
@@ -97,7 +98,22 @@ function gracefulShutdown(signal: string) {
 Deno.addSignalListener("SIGTERM", () => gracefulShutdown("SIGTERM"));
 Deno.addSignalListener("SIGINT", () => gracefulShutdown("SIGINT"));
 
-export const app = new App<State>();
+/**
+ * The Fresh app, with the tracking endpoints answered ahead of it: they take
+ * nearly all of an instance's traffic and need none of the router, context or
+ * middleware (see lib/fast-path.ts). Every other request goes to Fresh as it
+ * always did.
+ */
+class EchelonApp extends App<State> {
+  override handler(): ReturnType<App<State>["handler"]> {
+    const fresh = super.handler();
+    const fastPath = createFastPath(db);
+    return (req, info) =>
+      (info ? fastPath(req, info) : null) ?? fresh(req, info);
+  }
+}
+
+export const app = new EchelonApp();
 
 app.use(staticFiles());
 

@@ -15,6 +15,7 @@ import {
 } from "./config.ts";
 import type { BotScoreSignals } from "../types.ts";
 import { isCountryMismatch, isCrossContinent, isGlobalCommon } from "./geo.ts";
+import { hmacSha256Hex } from "./hotpath.ts";
 
 // ── Signal weights ──────────────────────────────────────────────────────────
 // Every write-time weight in one place. Several of these were calibrated on a
@@ -106,11 +107,10 @@ export function isKnownBot(ua: string | undefined): boolean {
 
 // ── Ephemeral HMAC key (daily rotation) ─────────────────────────────────────
 
-// The key is memoized as a *promise*, not as the resolved CryptoKey. Checking
-// `!hmacKey` and then awaiting importKey() let two callers in the same tick
-// both enter the branch and generate different keys, so the same IP hashed to
-// two values — splitting visitor IDs, burst counters and both bot IP maps.
-let hmacKeyPromise: Promise<CryptoKey> | null = null;
+// The key is created synchronously, so two callers in one tick cannot each
+// generate one: that once hashed the same IP to two values, splitting visitor
+// IDs, burst counters and both bot IP maps.
+let hmacKey: Uint8Array | null = null;
 // Rotation is anchored to the UTC date, not to process start. hashVisitor()
 // already mixes the UTC date into its input and promises "same visitor on the
 // same day = same ID"; a 24h timer started at the first request rotated the
@@ -118,24 +118,12 @@ let hmacKeyPromise: Promise<CryptoKey> | null = null;
 // that day's unique visitors and splitting every correlator cluster.
 let hmacKeyDate = "";
 
-function getHmacKey(): Promise<CryptoKey> {
+function getHmacKey(): Uint8Array {
   const today = new Date().toISOString().slice(0, 10);
-  if (hmacKeyPromise && hmacKeyDate === today) return hmacKeyPromise;
+  if (hmacKey && hmacKeyDate === today) return hmacKey;
 
   hmacKeyDate = today;
-  const pending = crypto.subtle.importKey(
-    "raw",
-    crypto.getRandomValues(new Uint8Array(32)),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  ).catch((err) => {
-    // Never leave a rejected promise memoized — that would wedge every
-    // subsequent hash for the life of the process.
-    if (hmacKeyPromise === pending) hmacKeyPromise = null;
-    throw err;
-  });
-  hmacKeyPromise = pending;
+  hmacKey = crypto.getRandomValues(new Uint8Array(32));
 
   // Every key in these maps is an IP hash under the *previous* key, so they are
   // unreachable after rotation. Clear them rather than leak dead entries
@@ -151,35 +139,29 @@ function getHmacKey(): Promise<CryptoKey> {
   crossSiteMap.clear();
   suspectedBotIps.clear();
   confirmedBotIps.clear();
-  return hmacKeyPromise;
+  return hmacKey;
 }
 
 /** Hash an IP address to a hex string using the daily-rotating HMAC key. */
+// deno-lint-ignore require-await
 export async function hashIp(ip: string): Promise<string> {
-  const key = await getHmacKey();
-  const data = new TextEncoder().encode(ip);
-  const sig = await crypto.subtle.sign("HMAC", key, data);
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return hmacSha256Hex(getHmacKey(), ip);
 }
 
 /**
  * Hash IP + User-Agent + site + date into a 16-char hex visitor ID.
  * Same visitor on same day = same ID. Resets daily — no cross-day tracking.
  */
+// deno-lint-ignore require-await
 export async function hashVisitor(
   ip: string,
   ua: string,
   siteId: string,
   date: string,
 ): Promise<string> {
-  const key = await getHmacKey();
-  const data = new TextEncoder().encode(`${ip}|${ua}|${siteId}|${date}`);
-  const sig = await crypto.subtle.sign("HMAC", key, data);
-  return Array.from(new Uint8Array(sig).slice(0, 8))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  // The first 8 bytes of the tag, as hex.
+  return hmacSha256Hex(getHmacKey(), `${ip}|${ua}|${siteId}|${date}`)
+    .slice(0, 16);
 }
 
 // ── Two-tier bot IP tracking ────────────────────────────────────────────────

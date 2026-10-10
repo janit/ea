@@ -4,7 +4,11 @@
 // pageviews, bounces, session lifecycle, clicks, and scroll depth.
 // Sites embed: <script async src="https://echelon.example.com/ea.js" data-site="my-site"></script>
 
-import { generateChallenge, getWasmBase64 } from "./challenge.ts";
+import {
+  generateChallenge,
+  getWasmBase64,
+  getWasmGeneration,
+} from "./challenge.ts";
 import { ALLOWED_ORIGINS, COOKIE_CONSENT, TRUST_PROXY } from "./config.ts";
 import { isDebugEnabled } from "./debug.ts";
 import { getConsentCss, refreshConsentCss } from "./consent-css.ts";
@@ -813,6 +817,25 @@ const SCRIPT_HEADERS = {
   "Cache-Control": "public, max-age=300",
 };
 
+// The rendered script depends only on the minute's challenge, the WASM blob
+// and the five values in the key below, so it is built once per combination
+// and minute rather than once per request. The origin comes from the Host
+// header, which anyone can set: the cache is small and is emptied when full.
+const TRACKER_CACHE_MAX = 64;
+const trackerCache = new Map<string, string>();
+let trackerCacheEpoch = "";
+let trackerRenders = 0;
+
+/** Exported for testing: how many times the script has been rendered. */
+export function _trackerRenders(): number {
+  return trackerRenders;
+}
+
+/** Exported for testing: how many rendered scripts are held. */
+export function _trackerCacheSize(): number {
+  return trackerCache.size;
+}
+
 export async function handleTracker(
   req: Request,
   db: DbAdapter,
@@ -841,30 +864,43 @@ export async function handleTracker(
   if (COOKIE_CONSENT) await refreshConsentCss(db);
   const consentCss = COOKIE_CONSENT ? getConsentCss(siteId) : "";
 
-  const [challenge, wasmB64] = await Promise.all([
+  const [challenge, wasmB64, wasmGeneration] = await Promise.all([
     generateChallenge(),
     getWasmBase64(),
+    getWasmGeneration(),
   ]);
+  const debugOn = isDebugEnabled();
+  const anon = shouldAnonymize(siteId);
 
-  // Escape all values for safe embedding in JS string literals.
-  // JSON.stringify handles quotes, backslashes, control chars, etc.
-  // .slice(1, -1) strips the outer quotes since they're already in the template.
-  // Arrow function replacers prevent $-pattern interpretation ($', $`, $&).
-  const safeOrigin = JSON.stringify(origin).slice(1, -1);
-  const safeChallenge = JSON.stringify(challenge).slice(1, -1);
-  const safeWasm = JSON.stringify(wasmB64).slice(1, -1);
-  const safeCss = JSON.stringify(consentCss).slice(1, -1);
+  // A new minute or a rotated blob makes every held script stale.
+  const epoch = `${challenge}|${wasmGeneration}`;
+  if (epoch !== trackerCacheEpoch) {
+    trackerCache.clear();
+    trackerCacheEpoch = epoch;
+  }
+  const cacheKey = `${debugOn}|${anon}|${origin}\n${consentCss}`;
+  let script = trackerCache.get(cacheKey);
+  if (script === undefined) {
+    // Escape all values for safe embedding in JS string literals.
+    // JSON.stringify handles quotes, backslashes, control chars, etc.
+    // .slice(1, -1) strips the outer quotes since they're already in the template.
+    // Arrow function replacers prevent $-pattern interpretation ($', $`, $&).
+    const safeOrigin = JSON.stringify(origin).slice(1, -1);
+    const safeChallenge = JSON.stringify(challenge).slice(1, -1);
+    const safeWasm = JSON.stringify(wasmB64).slice(1, -1);
+    const safeCss = JSON.stringify(consentCss).slice(1, -1);
 
-  const script = minifiedSource
-    .replace("__ECHELON_ORIGIN__", () => safeOrigin)
-    .replace("__ECHELON_CHALLENGE__", () => safeChallenge)
-    .replace("__ECHELON_WASM_B64__", () => safeWasm)
-    .replace("__ECHELON_CONSENT_CSS__", () => safeCss)
-    .replace("__ECHELON_DEBUG__", () => isDebugEnabled() ? "true" : "false")
-    .replace(
-      "__ECHELON_ANON__",
-      () => shouldAnonymize(siteId) ? "true" : "false",
-    );
+    script = minifiedSource
+      .replace("__ECHELON_ORIGIN__", () => safeOrigin)
+      .replace("__ECHELON_CHALLENGE__", () => safeChallenge)
+      .replace("__ECHELON_WASM_B64__", () => safeWasm)
+      .replace("__ECHELON_CONSENT_CSS__", () => safeCss)
+      .replace("__ECHELON_DEBUG__", () => debugOn ? "true" : "false")
+      .replace("__ECHELON_ANON__", () => anon ? "true" : "false");
+    trackerRenders++;
+    if (trackerCache.size >= TRACKER_CACHE_MAX) trackerCache.clear();
+    trackerCache.set(cacheKey, script);
+  }
 
   return new Response(script, { headers: SCRIPT_HEADERS });
 }

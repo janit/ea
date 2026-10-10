@@ -12,6 +12,7 @@ import {
 import { BOT_THRESHOLD } from "./bot-threshold.ts";
 import { buildChallengeWasm, generateParams } from "./challenge-wasm.ts";
 import { debug } from "./debug.ts";
+import { hmacSha256Hex } from "./hotpath.ts";
 
 const ROTATION_MS = 6 * 60 * 60 * 1000; // 6 hours
 const encoder = new TextEncoder();
@@ -24,20 +25,12 @@ if (!SECRET) {
   );
 }
 
-let hmacKey: CryptoKey | null = null;
+let hmacKey: Uint8Array | null = null;
 
-async function getHmacKey(): Promise<CryptoKey> {
-  if (hmacKey) return hmacKey;
-  const keyMaterial = SECRET
+function getHmacKey(): Uint8Array {
+  hmacKey ??= SECRET
     ? encoder.encode(SECRET)
     : crypto.getRandomValues(new Uint8Array(32));
-  hmacKey = await crypto.subtle.importKey(
-    "raw",
-    keyMaterial,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
   return hmacKey;
 }
 
@@ -48,20 +41,51 @@ function minuteBucket(offsetMinutes = 0): string {
   return String(now);
 }
 
+// A minute's challenge is a function of the key and the minute alone, and
+// verifyToken needs every minute of the window for each token it rejects.
+// Computed once per minute instead of once per request.
+const challenges = new Map<string, string>();
+let challengeComputations = 0;
+
+function challengeFor(bucket: string): string {
+  let challenge = challenges.get(bucket);
+  if (challenge === undefined) {
+    // The first 16 bytes of the tag, as hex.
+    challenge = hmacSha256Hex(getHmacKey(), bucket).slice(0, 32);
+    challengeComputations++;
+    challenges.set(bucket, challenge);
+    if (challenges.size > CHALLENGE_WINDOW_MINUTES + 2) {
+      const newest = Number(minuteBucket());
+      const oldest = newest - CHALLENGE_WINDOW_MINUTES;
+      for (const key of challenges.keys()) {
+        const minute = Number(key);
+        if (minute < oldest || minute > newest) challenges.delete(key);
+      }
+    }
+  }
+  return challenge;
+}
+
 /** Generate a challenge string for the current minute bucket. */
+// deno-lint-ignore require-await
 export async function generateChallenge(): Promise<string> {
-  const key = await getHmacKey();
   const bucket = minuteBucket();
-  const data = encoder.encode(bucket);
-  const sig = await crypto.subtle.sign("HMAC", key, data);
-  const challenge = Array.from(new Uint8Array(sig).slice(0, 16))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const challenge = challengeFor(bucket);
   debug("pow", "generateChallenge", {
     bucket,
     challenge: challenge.slice(0, 8) + "...",
   });
   return challenge;
+}
+
+/** Exported for testing: how many challenges have been computed. */
+export function _challengeComputations(): number {
+  return challengeComputations;
+}
+
+/** Exported for testing: how many minutes' challenges are held. */
+export function _challengeCacheSize(): number {
+  return challenges.size;
 }
 
 // ── WASM instance management ────────────────────────────────────────────────
@@ -257,7 +281,6 @@ export async function verifyToken(
   }
 
   const slot = await ensureCurrentSlot();
-  const key = await getHmacKey();
 
   // Collect active WASM slots
   const slots = [slot];
@@ -269,10 +292,7 @@ export async function verifyToken(
   for (let offset = 0; offset >= -CHALLENGE_WINDOW_MINUTES; offset--) {
     const bucket = minuteBucket(offset);
     bucketsTried.push(bucket);
-    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(bucket));
-    const challenge = Array.from(new Uint8Array(sig).slice(0, 16))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    const challenge = challengeFor(bucket);
 
     const input = challenge + ":" + sid + ":" + siteId;
 

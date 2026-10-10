@@ -12,6 +12,10 @@ data-*/
 !.claude/settings.json
 node_modules/
 
+# Rust build output of echelon-analytics/hotpath (the built module is
+# committed as lib/hotpath-wasm.ts)
+echelon-analytics/hotpath/target/
+
 # Serena MCP project metadata (local tooling, never published)
 .serena/
 

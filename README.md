@@ -82,7 +82,26 @@ deno task test:e2e
 
 # Update Fresh framework
 deno task update
+
+# Benchmark the tracking handlers (see bench/)
+deno task bench
 ```
+
+### Rust Hot Path
+
+HMAC-SHA256 and crawler user-agent matching, the two costliest steps of every
+tracking request, are written in Rust (`echelon-analytics/hotpath/`) and
+compiled to WebAssembly. The built module is committed as `lib/hotpath-wasm.ts`,
+so running, testing and deploying Echelon needs only Deno. Rebuild it after
+changing `hotpath/src`:
+
+```bash
+rustup target add wasm32-unknown-unknown   # once
+deno task build:hotpath
+```
+
+If the module cannot be loaded, the server logs a warning and uses the
+JavaScript implementations, which give the same results.
 
 ### Generating a Password Hash
 

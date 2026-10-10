@@ -1,33 +1,11 @@
 import { define } from "../utils.ts";
-import { ALLOWED_ORIGINS, TELEMETRY_ENDPOINT } from "../lib/config.ts";
-import { hashIp, isKnownBot, recordSuspectedBotIp } from "../lib/bot-score.ts";
-import { getClientIp, setPeerAddr } from "../lib/ip.ts";
+import { TELEMETRY_ENDPOINT } from "../lib/config.ts";
+import { setPeerAddr } from "../lib/ip.ts";
+import { corsHeaders } from "../lib/cors.ts";
+import { recordBotUaLeak } from "../lib/fast-path.ts";
 
-/**
- * Check whether a request origin is allowed.
- * If ALLOWED_ORIGINS is empty, all origins are accepted (open mode).
- */
-export function isAllowedOrigin(origin: string | null): boolean {
-  if (ALLOWED_ORIGINS.size === 0) return true;
-  if (!origin) return false;
-  try {
-    const hostname = new URL(origin).hostname.toLowerCase();
-    return ALLOWED_ORIGINS.has(hostname);
-  } catch {
-    return false;
-  }
-}
-
-/** Check whether a request's Referer header matches an allowed origin. */
-export function isAllowedReferer(referer: string | null): boolean {
-  if (!referer) return false;
-  try {
-    const hostname = new URL(referer).hostname.toLowerCase();
-    return ALLOWED_ORIGINS.has(hostname);
-  } catch {
-    return false;
-  }
-}
+// Kept here for the routes and tests that import them from this module.
+export { corsHeaders, isAllowedOrigin, isAllowedReferer } from "../lib/cors.ts";
 
 /** Content-Security-Policy for admin pages (defense-in-depth).
  *  Telemetry endpoint is allowed so the inline self-tracking script can
@@ -55,17 +33,7 @@ export const handler = define.middleware([
   async (ctx) => {
     setPeerAddr(ctx.req, ctx.info);
 
-    // Record IPs that leak known-bot UAs (e.g. HeadlessChrome on /sw.js).
-    // This flags the IP so beacon requests from the same source get penalised,
-    // even if the bot spoofs its UA on tracking requests.
-    const ua = ctx.req.headers.get("user-agent") ?? "";
-    if (ua && isKnownBot(ua)) {
-      const ip = getClientIp(ctx.req);
-      if (ip !== "unknown") {
-        const ipHash = await hashIp(ip);
-        recordSuspectedBotIp(ipHash);
-      }
-    }
+    await recordBotUaLeak(ctx.req);
 
     if (ctx.req.method === "OPTIONS") {
       return new Response(null, {
@@ -83,44 +51,3 @@ export const handler = define.middleware([
     return resp;
   },
 ]);
-
-/** Paths that require permissive CORS (cross-origin tracking beacons). */
-const TRACKING_PATHS = new Set(["/b.gif", "/e", "/ea.js", "/c"]);
-
-export function corsHeaders(req: Request): Headers {
-  const origin = req.headers.get("origin");
-  const headers = new Headers();
-  const pathname = new URL(req.url).pathname;
-  const isTracking = TRACKING_PATHS.has(pathname);
-
-  if (!isTracking) {
-    // Non-tracking routes: same-origin only — do not reflect arbitrary origins
-    headers.set("Access-Control-Allow-Origin", "null");
-  } else if (ALLOWED_ORIGINS.size > 0) {
-    // Restricted mode: only reflect allowed origins, enable credentials
-    if (isAllowedOrigin(origin)) {
-      headers.set("Access-Control-Allow-Origin", origin!);
-      headers.set("Access-Control-Allow-Credentials", "true");
-    } else {
-      headers.set("Access-Control-Allow-Origin", "null");
-    }
-  } else {
-    // Open mode on tracking endpoints: reflect origin (sendBeacon sends
-    // credentials, which requires a specific origin — wildcard '*' is
-    // rejected by browsers)
-    if (origin) {
-      headers.set("Access-Control-Allow-Origin", origin);
-      headers.set("Access-Control-Allow-Credentials", "true");
-    } else {
-      headers.set("Access-Control-Allow-Origin", "*");
-    }
-  }
-
-  headers.set(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PATCH, DELETE, OPTIONS",
-  );
-  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  headers.set("Access-Control-Max-Age", "86400");
-  return headers;
-}

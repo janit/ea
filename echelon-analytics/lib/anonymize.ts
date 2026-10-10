@@ -6,6 +6,7 @@
 
 import type { SemanticEvent, ViewRecord } from "../types.ts";
 import { ANONYMIZE_SITES, SECRET } from "./config.ts";
+import { hmacSha256Hex } from "./hotpath.ts";
 
 // ── HMAC key: daily-rotating seed + server secret ────────────────────────────
 // The secret prevents anyone from reversing the anonymization without access
@@ -15,9 +16,9 @@ import { ANONYMIZE_SITES, SECRET } from "./config.ts";
 const fallbackSecret = crypto.getRandomValues(new Uint8Array(32));
 
 let hmacKeyDate = "";
-let hmacKey: CryptoKey | null = null;
+let hmacKey: Uint8Array | null = null;
 
-async function getHmacKey(): Promise<CryptoKey> {
+function getHmacKey(): Uint8Array {
   const today = new Date().toISOString().slice(0, 10);
   if (hmacKey && hmacKeyDate === today) return hmacKey;
   const salt = SECRET ? new TextEncoder().encode(SECRET) : fallbackSecret;
@@ -25,24 +26,14 @@ async function getHmacKey(): Promise<CryptoKey> {
   const seed = new Uint8Array(salt.length + dateBytes.length);
   seed.set(salt);
   seed.set(dateBytes, salt.length);
-  hmacKey = await crypto.subtle.importKey(
-    "raw",
-    seed,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+  hmacKey = seed;
   hmacKeyDate = today;
   return hmacKey;
 }
 
+// deno-lint-ignore require-await
 async function hmacHex(input: string): Promise<string> {
-  const key = await getHmacKey();
-  const data = new TextEncoder().encode(input);
-  const sig = await crypto.subtle.sign("HMAC", key, data);
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return hmacSha256Hex(getHmacKey(), input);
 }
 
 /** Deterministic index into an array from a string input. */

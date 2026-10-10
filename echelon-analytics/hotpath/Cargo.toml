@@ -1,0 +1,27 @@
+[package]
+name = "echelon-hotpath"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Echelon Analytics: the per-request work that is too slow in JS, compiled to WASM"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hmac = "0.12"
+sha2 = "0.10"
+# The lazy DFA alone, with no Unicode tables: user agents are matched as bytes,
+# ASCII case-insensitively, which is what the JS RegExp does for the ASCII
+# input this module is given. The full `regex` crate builds several engines
+# per set and takes over a second to compile the crawler feed.
+regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "hybrid", "perf-inline"] }
+regex-syntax = { version = "0.8", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

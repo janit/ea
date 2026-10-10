@@ -16,6 +16,8 @@
 //   5. DigitalOcean geofeed CSV       — datacenter IPv4+IPv6 CIDRs     → +24
 //   6. Oracle Cloud public_ip_ranges  — datacenter IPv4+IPv6 CIDRs     → +24
 
+import { buildUaMatcher, type UaMatcher } from "./hotpath.ts";
+
 // ── Configuration ───────────────────────────────────────────────────────────
 
 const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -33,7 +35,7 @@ const OCI_IP_URL =
 
 // ── In-memory state ─────────────────────────────────────────────────────────
 
-let crawlerRegex: RegExp | null = null; // Combined regex from all crawler patterns
+let crawlerMatcher: UaMatcher | null = null; // All crawler patterns, as one matcher
 let aiCrawlerRegex: RegExp | null = null; // Combined regex from AI bot names
 let dcRangesV4: [number, number][] = []; // Merged, sorted IPv4 intervals
 let dcRangesV6: [bigint, bigint][] = []; // Merged, sorted IPv6 intervals
@@ -58,7 +60,7 @@ const dcFeeds: Record<"aws" | "gcp" | "digitalocean" | "oracle", DcRanges> = {
 
 /** True if UA matches a known crawler pattern from the community feed. */
 export function matchesCrawlerFeed(ua: string): boolean {
-  return crawlerRegex !== null && crawlerRegex.test(ua);
+  return crawlerMatcher !== null && crawlerMatcher.test(ua);
 }
 
 /** True if UA matches a known AI bot name from the ai-robots-txt feed. */
@@ -307,10 +309,12 @@ async function refreshCrawlerUAs(): Promise<void> {
       return;
     }
 
-    crawlerRegex = new RegExp(`(?:${valid.join("|")})`, "i");
+    // Answers what new RegExp(`(?:${valid.join("|")})`, "i") answers, with
+    // the patterns Rust can run compiled there (lib/hotpath.ts).
+    crawlerMatcher = buildUaMatcher(valid);
     crawlerPatternCount = valid.length;
     console.log(
-      `[echelon] threat-feeds: loaded ${valid.length} crawler UA patterns`,
+      `[echelon] threat-feeds: loaded ${valid.length} crawler UA patterns (${crawlerMatcher.nativePatterns} in wasm, ${crawlerMatcher.jsPatterns} in js)`,
     );
   } catch (e) {
     console.warn("[echelon] threat-feeds: failed to fetch crawler UAs:", e);
@@ -526,7 +530,7 @@ export function stopThreatFeeds(): void {
     clearInterval(refreshTimer);
     refreshTimer = null;
   }
-  crawlerRegex = null;
+  crawlerMatcher = null;
   aiCrawlerRegex = null;
   dcRangesV4 = [];
   dcRangesV6 = [];
@@ -549,5 +553,6 @@ export {
   parseCidrV6 as _parseCidrV6,
   parseDigitalOceanCsv as _parseDigitalOceanCsv,
   parseOracleJson as _parseOracleJson,
+  refreshCrawlerUAs as _refreshCrawlerUAs,
 };
 export type { DcRanges };

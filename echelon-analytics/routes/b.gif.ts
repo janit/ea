@@ -1,42 +1,7 @@
 import { define } from "../utils.ts";
-import { handleBeacon, PIXEL } from "../lib/beacon.ts";
-import {
-  corsHeaders,
-  isAllowedOrigin,
-  isAllowedReferer,
-} from "./_middleware.ts";
-import { ALLOWED_ORIGINS, TELEMETRY_SITE_ID } from "../lib/config.ts";
-import { isRateLimited } from "../lib/rate-limit.ts";
+import { serveBeacon } from "../lib/fast-path.ts";
 
+// In production lib/fast-path.ts answers this before the router is reached.
 export const handler = define.handlers({
-  async GET(ctx) {
-    // Rate limit check — drop early
-    if (isRateLimited(ctx.req)) {
-      return new Response(PIXEL, {
-        headers: { "Content-Type": "image/gif", "Cache-Control": "no-store" },
-      });
-    }
-
-    // Image requests use Referer, not Origin — exempt telemetry site_id
-    if (ALLOWED_ORIGINS.size > 0) {
-      const siteParam = new URL(ctx.req.url).searchParams.get("s");
-      if (siteParam !== TELEMETRY_SITE_ID) {
-        const referer = ctx.req.headers.get("referer");
-        const origin = ctx.req.headers.get("origin");
-        if (!isAllowedOrigin(origin) && !isAllowedReferer(referer)) {
-          return new Response(PIXEL, {
-            headers: {
-              "Content-Type": "image/gif",
-              "Cache-Control": "no-store",
-            },
-          });
-        }
-      }
-    }
-
-    const resp = await handleBeacon(ctx.req, ctx.state.db);
-    const headers = corsHeaders(ctx.req);
-    for (const [k, v] of resp.headers) headers.set(k, v);
-    return new Response(resp.body, { status: resp.status, headers });
-  },
+  GET: (ctx) => serveBeacon(ctx.req, ctx.state.db),
 });

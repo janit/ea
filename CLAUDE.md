@@ -41,6 +41,12 @@ deno check main.ts mcp-server.ts routes/ lib/ islands/ components/
 
 # Update Fresh framework
 deno task update
+
+# Benchmark the tracking handlers in-process (needs network for the feeds)
+deno task bench
+
+# Rebuild the Rust hot path module (needs cargo + the wasm32-unknown-unknown target)
+deno task build:hotpath
 ```
 
 ### Testing
@@ -71,10 +77,24 @@ person behind it. Both endpoints score requests for bot likelihood (0–100), th
 push records into in-memory `BufferedWriter` instances that batch-flush to
 SQLite every 10–15 seconds.
 
+The four tracking endpoints (`/ea.js`, `/b.gif`, `/e`, `/c`) are answered before
+Fresh's router: `EchelonApp.handler()` in `main.ts` asks `createFastPath()`
+(`lib/fast-path.ts`) first and hands every other request to Fresh. The fast path
+takes a request only on an exact path and method match (plus `OPTIONS`
+preflights for those paths) and does what the middleware around the routes did:
+records the connection's address, marks an address that sends a known-bot user
+agent, sets the security headers and feeds the request statistics. The route
+files still exist and call the same `serve*` functions, so `deno task dev` and
+any request the fast path declines (`/c/`, `HEAD /c`) behave as before. Change
+an endpoint's behaviour in `serve*`, not in the route file, and keep
+`tests/fast-path_test.ts` holding the two to the same answer. CORS and origin
+gating live in `lib/cors.ts`.
+
 ### Key Directories (`echelon-analytics/`)
 
 - **`routes/`** — File-system routing. Public tracking endpoints (`ea.js.ts`,
-  `b.gif.ts`, `e.ts`) at root. Admin UI under `admin/`. REST API under `api/`.
+  `b.gif.ts`, `e.ts`, `c.ts`) at root, thin wrappers over `lib/fast-path.ts`.
+  Admin UI under `admin/`. REST API under `api/`.
 - **`lib/`** — All backend logic: bot scoring (`bot-score.ts`), bot correlator
   (`bot-correlator.ts`), threat feeds (`threat-feeds.ts`), PoW challenge
   generation (`challenge.ts`, `challenge-wasm.ts`), buffered DB writes
@@ -86,6 +106,13 @@ SQLite every 10–15 seconds.
 - **`lib/db/`** — SQLite layer: `database.ts` (singleton + migrations, error
   retry on init), `schema.ts` (DDL), `sqlite-adapter.ts` (concrete adapter using
   `node:sqlite`, serialized transactions via queue), `adapter.ts` (interface).
+- **`hotpath/`** — Rust crate compiled to WASM: sync HMAC-SHA256 and the crawler
+  user-agent matcher. `deno task build:hotpath` writes it, base64 encoded, to
+  `lib/hotpath-wasm.ts`, which is committed, so running, testing and deploying
+  need no Rust toolchain. `lib/hotpath.ts` is its only caller.
+- **`bench/`** — `tracking.ts` (in-process cost of each tracking handler and its
+  parts; `--save`/`--against` compare two checkouts) and `http_load.ts` (load
+  test of a running server; `--pid` reports the server's CPU time per request).
 - **`islands/`** — Client-hydrated Preact components (charts, forms, realtime
   panel). Use `@preact/signals` for reactivity.
 - **`components/`** — Server-only components (admin nav shell with live stats
@@ -106,6 +133,31 @@ date still in retention and the rollup only for purged dates (90-day default
 retention, configurable separately for bot-scored data via
 `ECHELON_BOT_RETENTION_DAYS`). Purge covers all bot_score ranges including
 negative values (server-ingested events use bot_score=-1).
+
+### Hot Path Module
+
+The per-request work that was slow in JS runs in Rust (`hotpath/`, loaded by
+`lib/hotpath.ts`):
+
+- **HMAC-SHA256** — `hmacSha256Hex(key, msg)` is synchronous and returns what
+  WebCrypto returns. `hashIp`, `hashVisitor`, the PoW challenge and the
+  anonymiser use it; WebCrypto cost a round trip off the event loop per call.
+- **Crawler feed matching** — `buildUaMatcher(patterns)` answers what
+  `new RegExp("(?:" + patterns.join("|") + ")", "i").test(ua)` answers. A
+  pattern is compiled in Rust only if it reads the same in both engines
+  (`isRustSafe`: printable ASCII, no look-around, no Rust-only syntax), and a
+  user agent is sent to Rust only if it is printable ASCII and at most 4096
+  characters; the rest is answered by the RegExp. A back-reference anywhere
+  keeps the whole list in JS, because group numbers count across the combined
+  expression. Only the newest matcher uses the module.
+
+If the module fails to load, `node:crypto` and the RegExp do the work
+(`hotpathBackend()` says which is serving). `tests/hotpath_test.ts` holds both
+implementations to the same answers; add a case there when changing either. Two
+caches sit beside it: a minute's challenge is computed once (`challengeFor` in
+`lib/challenge.ts`), and the rendered `/ea.js` is kept per origin, consent CSS,
+debug and anonymise flag until the challenge or the WASM blob changes (at most
+64 entries, emptied when full, since the origin comes from the Host header).
 
 ### Authentication
 

@@ -8,7 +8,9 @@
     "build": "vite build",
     "start": "sh -c 'deno serve -A --port=${ECHELON_PORT:-1947} _fresh/server.js'",
     "update": "deno run -A -r jsr:@fresh/update .",
-    "mcp": "deno run -A mcp-server.ts"
+    "mcp": "deno run -A mcp-server.ts",
+    "build:hotpath": "deno run -A hotpath/build.ts",
+    "bench": "deno run -A --no-check bench/tracking.ts"
   },
   "lint": {
     "rules": {
@@ -16,7 +18,7 @@
       "exclude": ["react-no-danger"]
     }
   },
-  "exclude": ["**/_fresh/*", "echelon.db*"],
+  "exclude": ["**/_fresh/*", "echelon.db*", "hotpath/target/"],
   "imports": {
     "@/": "./",
     "fresh": "jsr:@fresh/core@^2.3.3",
