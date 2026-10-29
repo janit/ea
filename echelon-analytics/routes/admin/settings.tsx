@@ -51,9 +51,9 @@ export default define.page<typeof handler>(function SettingsPage(props) {
       telemetryState={state.telemetryState}
     >
       <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-        <h3 class="text-sm text-[var(--ea-primary)] mb-3">
-          Cookie Consent Banner — {site}
-        </h3>
+        <h2 class="text-sm text-[var(--ea-primary)] mb-3">
+          Cookie Consent Banner: {site}
+        </h2>
         <ConsentCssEditor
           siteId={site}
           initialCss={consentCss}
@@ -77,9 +77,9 @@ export default define.page<typeof handler>(function SettingsPage(props) {
       </div>
 
       <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-        <h3 class="text-sm text-[var(--ea-primary)] mb-3">
-          Home Audience — {site}
-        </h3>
+        <h2 class="text-sm text-[var(--ea-primary)] mb-3">
+          Home Audience: {site}
+        </h2>
         <p class="text-xs text-[var(--ea-muted)] mb-3">
           Where this site's visitors are expected to come from. When set,
           visitors from another continent, and device patterns that only make
@@ -95,7 +95,7 @@ export default define.page<typeof handler>(function SettingsPage(props) {
       </div>
 
       <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-        <h3 class="text-sm text-[var(--ea-primary)] mb-3">Debug Logging</h3>
+        <h2 class="text-sm text-[var(--ea-primary)] mb-3">Debug Logging</h2>
         <p class="text-xs text-[var(--ea-muted)] mb-3">
           Verbose server + client console output for diagnosing PoW
           verification, bot scoring, beacon/event processing, and tracker
@@ -109,7 +109,7 @@ export default define.page<typeof handler>(function SettingsPage(props) {
       </div>
 
       <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-        <h3 class="text-sm text-[var(--ea-primary)] mb-3">Telemetry</h3>
+        <h2 class="text-sm text-[var(--ea-primary)] mb-3">Telemetry</h2>
         <p class="text-xs text-[var(--ea-muted)] mb-3">
           Anonymous admin panel usage data sent to the Echelon project. No
           visitor data, page content, or PII is ever shared.{" "}
@@ -119,7 +119,7 @@ export default define.page<typeof handler>(function SettingsPage(props) {
             rel="noopener"
             class="underline"
           >
-            Learn more
+            What telemetry sends
           </a>
         </p>
         <TelemetryToggle

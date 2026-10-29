@@ -45,6 +45,7 @@ function formatUptime(seconds: number): string {
 // CSS for expanded/collapsed states — driven by JS overflow detection, not media queries
 const NAV_CSS = `
 #an .nav-toggle-label{display:none}
+#an:not([data-c]) #nav-toggle{display:none}
 #an .nav-inner{display:flex;align-items:center;gap:1rem;flex-wrap:nowrap;min-height:3rem}
 #an .nav-menu{display:flex;align-items:center;gap:.75rem;flex:1}
 #an .nav-links{display:flex;flex:1;justify-content:center;gap:.75rem;white-space:nowrap;font-size:.875rem}
@@ -56,7 +57,7 @@ const NAV_CSS = `
 #an .nav-close{display:none}
 #an[data-c] .nav-toggle-label{display:block}
 #an[data-c] .nav-inner{flex-wrap:wrap}
-#an[data-c] .nav-bar{width:calc(100% - 2.5rem)}
+#an[data-c] .nav-bar{width:calc(100% - 3.5rem)}
 #an[data-c] .nav-menu{display:none;width:100%;order:10}
 #an[data-c] #nav-toggle:checked~.nav-menu{display:block}
 #an[data-c] #nav-toggle:checked~.nav-toggle-label .nav-close{display:inline}
@@ -104,7 +105,7 @@ export function AdminNav(
 ) {
   const fullTitle = `${title} - Echelon Analytics`;
   const description =
-    `${title} — Echelon Analytics: privacy-first, cookieless web analytics.`;
+    `${title}: Echelon Analytics, privacy-first, cookieless web analytics.`;
   const robotsContent = PUBLIC_MODE ? "index, follow" : "noindex, nofollow";
 
   return (
@@ -149,7 +150,12 @@ export function AdminNav(
           style="visibility:hidden;background:var(--ea-nav-bg)"
         >
           <div class="nav-inner max-w-[90rem] mx-auto px-4">
-            <input type="checkbox" id="nav-toggle" class="hidden" />
+            <input
+              type="checkbox"
+              id="nav-toggle"
+              class="sr-only peer"
+              aria-label="Menu"
+            />
 
             {/* Left cluster: logo + selectors (always visible) */}
             <div class="nav-bar flex items-center h-12 gap-4 shrink-0">
@@ -163,7 +169,8 @@ export function AdminNav(
               <div class="flex items-center gap-2">
                 <select
                   name="site_id"
-                  class="border border-[var(--ea-nav-muted)] bg-[var(--ea-nav-bg)] text-[var(--ea-nav-text)] px-2 py-1 text-xs focus:border-[var(--ea-nav-text)] outline-none"
+                  aria-label="Site"
+                  class="border border-[var(--ea-nav-muted)] bg-[var(--ea-nav-bg)] text-[var(--ea-nav-text)] px-2 py-1 text-xs focus:border-[var(--ea-nav-text)]"
                 >
                   {knownSites.map((s: string) => (
                     <option key={s} value={s} selected={s === siteId}>
@@ -173,7 +180,8 @@ export function AdminNav(
                 </select>
                 <select
                   name="days"
-                  class="border border-[var(--ea-nav-muted)] bg-[var(--ea-nav-bg)] text-[var(--ea-nav-text)] px-2 py-1 text-xs focus:border-[var(--ea-nav-text)] outline-none"
+                  aria-label="Date range"
+                  class="border border-[var(--ea-nav-muted)] bg-[var(--ea-nav-bg)] text-[var(--ea-nav-text)] px-2 py-1 text-xs focus:border-[var(--ea-nav-text)]"
                 >
                   {DAY_OPTIONS.map((d) => (
                     <option key={d} value={d} selected={d === days}>
@@ -193,13 +201,11 @@ export function AdminNav(
                 <a href="/admin/pageviews">Page Views</a>
                 <a href="/admin/events">Events</a>
 
-                {/* Bots — expanded: hover dropdown */}
+                {/* Bots — expanded: dropdown opens on hover or keyboard focus */}
                 <div class="relative group desk-bots">
-                  <span class="cursor-default text-[var(--ea-nav-muted)]">
-                    Bots
-                  </span>
+                  <a href="/admin/bots" aria-haspopup="true">Bots</a>
                   <div
-                    class="hidden group-hover:block absolute left-0 top-full py-1 z-10 min-w-32 border border-[var(--ea-border)]"
+                    class="hidden group-hover:block group-focus-within:block absolute left-0 top-full py-1 z-10 min-w-32 border border-[var(--ea-border)]"
                     style="background:var(--ea-nav-bg)"
                   >
                     <a
@@ -259,10 +265,10 @@ export function AdminNav(
             {/* Hamburger toggle (always visible when collapsed) */}
             <label
               for="nav-toggle"
-              class="nav-toggle-label cursor-pointer text-[var(--ea-nav-text)] text-xl leading-none select-none shrink-0"
+              class="nav-toggle-label cursor-pointer text-[var(--ea-nav-text)] text-xl leading-none select-none shrink-0 p-2 -m-2 peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--ea-focus)]"
             >
-              <span class="nav-open">🍔</span>
-              <span class="nav-close">✕</span>
+              <span class="nav-open" aria-hidden="true">🍔</span>
+              <span class="nav-close" aria-hidden="true">✕</span>
             </label>
           </div>
         </nav>
@@ -274,7 +280,7 @@ export function AdminNav(
             class="border-b border-[var(--ea-border)]"
             style="background:var(--ea-bg)"
           >
-            <div class="max-w-7xl mx-auto px-4 flex items-center h-8 gap-3 text-xs text-[var(--ea-muted)]">
+            <div class="max-w-7xl mx-auto px-4 flex flex-wrap items-center min-h-8 py-1 gap-x-3 gap-y-1 text-xs text-[var(--ea-muted)]">
               <span
                 title={`Human views (${liveStats.windowMinutes}m)`}
               >
@@ -316,8 +322,11 @@ export function AdminNav(
                   target="_blank"
                   rel="noopener"
                   title={telemetryState === "on"
-                    ? "Telemetry: active \u2014 click for details"
-                    : "Telemetry: inactive \u2014 click for details"}
+                    ? "Telemetry: active. Click for details"
+                    : "Telemetry: inactive. Click for details"}
+                  aria-label={telemetryState === "on"
+                    ? "Telemetry: active. Details"
+                    : "Telemetry: inactive. Details"}
                   class="ml-auto hover:opacity-80"
                 >
                   📞 {telemetryState === "on" ? "\u{1F7E2}" : "\u{1F534}"}

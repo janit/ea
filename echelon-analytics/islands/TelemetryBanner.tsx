@@ -63,7 +63,7 @@ export default function TelemetryBanner(
             rel="noopener"
             class="underline text-[var(--ea-muted)]"
           >
-            Learn more
+            What telemetry sends
           </a>
         </div>
         {error.value && (

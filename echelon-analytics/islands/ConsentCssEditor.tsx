@@ -39,14 +39,18 @@ export default function ConsentCssEditor(
   }
 
   const inputCls =
-    "border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-primary)] px-3 py-2 text-sm w-full focus:border-[var(--ea-primary)] outline-none font-mono";
+    "border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-primary)] px-3 py-2 text-sm w-full focus:border-[var(--ea-primary)] font-mono";
 
   return (
     <div>
-      <label class="block text-xs text-[var(--ea-muted)] mb-1">
+      <label
+        for="consent-css"
+        class="block text-xs text-[var(--ea-muted)] mb-1"
+      >
         Custom CSS (injected into shadow DOM)
       </label>
       <textarea
+        id="consent-css"
         class={inputCls}
         rows={6}
         placeholder={`.bar { background: #2d2d2d; }

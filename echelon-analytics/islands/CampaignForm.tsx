@@ -51,7 +51,7 @@ export default function CampaignForm({ readOnly }: { readOnly?: boolean }) {
   }
 
   const inputCls =
-    "border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-primary)] px-2 py-1.5 text-sm w-full focus:border-[var(--ea-primary)] outline-none";
+    "border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-primary)] px-2 py-1.5 text-sm w-full focus:border-[var(--ea-primary)]";
 
   return (
     <form onSubmit={submit}>
@@ -73,32 +73,52 @@ export default function CampaignForm({ readOnly }: { readOnly?: boolean }) {
       )}
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-2 mb-2">
-        <input
-          class={inputCls}
-          placeholder="id (slug)"
-          value={id.value}
-          onInput={(e) => (id.value = (e.target as HTMLInputElement).value)}
-        />
-        <input
-          class={inputCls}
-          placeholder="name"
-          value={name.value}
-          onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
-        />
-        <input
-          class={inputCls}
-          placeholder="utm_campaign value"
-          value={utmCampaign.value}
-          onInput={(
-            e,
-          ) => (utmCampaign.value = (e.target as HTMLInputElement).value)}
-        />
-        <input
-          class={inputCls}
-          placeholder="site_id (default)"
-          value={siteId.value}
-          onInput={(e) => (siteId.value = (e.target as HTMLInputElement).value)}
-        />
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">
+            ID (slug)
+          </span>
+          <input
+            class={inputCls}
+            placeholder="id (slug)"
+            value={id.value}
+            onInput={(e) => (id.value = (e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">Name</span>
+          <input
+            class={inputCls}
+            placeholder="name"
+            value={name.value}
+            onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">
+            utm_campaign value
+          </span>
+          <input
+            class={inputCls}
+            placeholder="utm_campaign value"
+            value={utmCampaign.value}
+            onInput={(
+              e,
+            ) => (utmCampaign.value = (e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">
+            Site ID
+          </span>
+          <input
+            class={inputCls}
+            placeholder="site_id (default)"
+            value={siteId.value}
+            onInput={(
+              e,
+            ) => (siteId.value = (e.target as HTMLInputElement).value)}
+          />
+        </label>
       </div>
 
       <button

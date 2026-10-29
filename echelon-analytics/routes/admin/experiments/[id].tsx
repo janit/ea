@@ -139,10 +139,10 @@ export default define.page<typeof handler>(function ExperimentDetailPage({
         </div>
       )}
 
-      <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+      <h2 class="text-sm text-[var(--ea-primary)] mb-2">
         Variants ({variants.length})
-      </h3>
-      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+      </h2>
+      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-[var(--ea-border)]">
@@ -186,8 +186,8 @@ export default define.page<typeof handler>(function ExperimentDetailPage({
 
       {stats && stats.variants.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">Results</h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">Results</h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">
@@ -223,7 +223,7 @@ export default define.page<typeof handler>(function ExperimentDetailPage({
                     <td class="px-4 py-1.5 text-right tabular-nums text-[var(--ea-primary)]">
                       {v.impressions}
                     </td>
-                    <td class="px-4 py-1.5 text-right tabular-nums text-[#ff6600]">
+                    <td class="px-4 py-1.5 text-right tabular-nums text-[var(--ea-series-2)]">
                       {v.conversions}
                     </td>
                     <td class="px-4 py-1.5 text-right tabular-nums text-[var(--ea-primary)]">

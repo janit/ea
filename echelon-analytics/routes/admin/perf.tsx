@@ -33,10 +33,10 @@ export default define.page<typeof handler>(function PerfPage({ data, state }) {
       url={state.url}
       telemetryState={state.telemetryState}
     >
-      <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+      <h2 class="text-sm text-[var(--ea-primary)] mb-2">
         Recent Metrics ({metrics.length})
-      </h3>
-      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+      </h2>
+      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-[var(--ea-border)]">
@@ -88,7 +88,7 @@ export default define.page<typeof handler>(function PerfPage({ data, state }) {
 
       {trendKeys.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">Trends</h3>
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">Trends</h2>
           {trendKeys.map((key) => {
             const rows = trends[key];
             if (!rows.length) return null;
@@ -120,7 +120,7 @@ export default define.page<typeof handler>(function PerfPage({ data, state }) {
                         key={i}
                         style={`width:${
                           100 / values.length
-                        }%;height:${h}px;background:#ff6600`}
+                        }%;height:${h}px;background:var(--ea-series-2)`}
                         class="rounded-sm"
                         title={`${v.toFixed(2)} (${
                           formatDate(rows[i].recorded_at)

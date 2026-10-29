@@ -35,17 +35,17 @@ export default define.page<typeof handler>(function ExperimentsPage(props) {
     >
       {!PUBLIC_MODE && (
         <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">
             Create Experiment
-          </h3>
+          </h2>
           <ExperimentForm />
         </div>
       )}
 
-      <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+      <h2 class="text-sm text-[var(--ea-primary)] mb-2">
         All Experiments ({experiments.length})
-      </h3>
-      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+      </h2>
+      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-[var(--ea-border)]">
@@ -120,17 +120,17 @@ export default define.page<typeof handler>(function ExperimentsPage(props) {
 
       {stats.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2 mt-4">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2 mt-4">
             Active/Completed Stats
-          </h3>
+          </h2>
           {stats.map((s) => (
             <div
               key={s.experiment_id}
               class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-3"
             >
-              <h4 class="text-sm text-[var(--ea-primary)]">
+              <h3 class="text-sm text-[var(--ea-primary)]">
                 {s.name} <span class={`status-${s.status}`}>({s.status})</span>
-              </h4>
+              </h3>
               <table class="w-full text-sm mt-2">
                 <thead>
                   <tr class="border-b border-[var(--ea-border)]">
@@ -166,7 +166,7 @@ export default define.page<typeof handler>(function ExperimentsPage(props) {
                       <td class="py-1 text-right tabular-nums text-[var(--ea-primary)]">
                         {v.impressions}
                       </td>
-                      <td class="py-1 text-right tabular-nums text-[#ff6600]">
+                      <td class="py-1 text-right tabular-nums text-[var(--ea-series-2)]">
                         {v.conversions}
                       </td>
                       <td class="py-1 text-right tabular-nums text-[var(--ea-primary)]">

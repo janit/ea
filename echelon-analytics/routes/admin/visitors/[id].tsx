@@ -157,9 +157,9 @@ export default define.page<typeof handler>(function VisitorDetailPage(props) {
       </div>
 
       {/* Page Views */}
-      <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+      <h2 class="text-sm text-[var(--ea-primary)] mb-2">
         Page Views ({views.length})
-      </h3>
+      </h2>
       <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
         <table class="w-full text-sm">
           <thead>
@@ -258,9 +258,9 @@ export default define.page<typeof handler>(function VisitorDetailPage(props) {
       {/* Semantic Events */}
       {events.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">
             Semantic Events ({events.length})
-          </h3>
+          </h2>
           <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
             <table class="w-full text-sm">
               <thead>

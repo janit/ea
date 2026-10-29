@@ -83,6 +83,10 @@ export default function BotScoreDetail({ viewId, eventId, score }: Props) {
           class="text-xs text-[var(--ea-muted)] hover:text-[var(--ea-primary)] cursor-pointer"
           onClick={toggle}
           disabled={loading.value}
+          aria-expanded={open.value}
+          aria-label={open.value
+            ? "Hide score breakdown"
+            : "Show score breakdown"}
         >
           {loading.value ? "..." : open.value ? "[-]" : "[+]"}
         </button>

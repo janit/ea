@@ -25,7 +25,14 @@ export default function TrendChart({ data }: Props) {
 
   return (
     <div style="overflow-x: auto">
-      <svg width={W} height={H + 30} viewBox={`0 0 ${W} ${H + 30}`}>
+      <svg
+        viewBox={`0 0 ${W} ${H + 30}`}
+        class="w-full h-auto"
+        role="img"
+        aria-label={`Daily views, ${data[0].date} to ${
+          data[data.length - 1].date
+        }`}
+      >
         {data.map((d, i) => {
           const x = i * (barW + gap);
           const barH = Math.max(1, (d.visits / maxVal) * H);
@@ -36,6 +43,7 @@ export default function TrendChart({ data }: Props) {
               key={d.date}
               onMouseEnter={() => (hovered.value = i)}
               onMouseLeave={() => (hovered.value = null)}
+              onClick={() => (hovered.value = i)}
             >
               <rect
                 x={x}

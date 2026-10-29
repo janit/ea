@@ -21,7 +21,8 @@ export default function ThemeSelector({ themes }: { themes: Theme[] }) {
 
   return (
     <select
-      class="border border-[var(--ea-nav-muted)] bg-[var(--ea-nav-bg)] text-[var(--ea-nav-text)] px-2 py-1 text-xs focus:border-[var(--ea-nav-text)] outline-none"
+      aria-label="Theme"
+      class="border border-[var(--ea-nav-muted)] bg-[var(--ea-nav-bg)] text-[var(--ea-nav-text)] px-2 py-1 text-xs focus:border-[var(--ea-nav-text)]"
       onChange={onChange}
       value={current.value}
     >

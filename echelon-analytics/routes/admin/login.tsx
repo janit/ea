@@ -28,7 +28,7 @@ export const handler = define.handlers({
     // cross-site form post can log a victim into an attacker's session (the
     // response's Set-Cookie is stored normally; SameSite only governs sending).
     if (!checkCsrf(ctx.req, new URL(ctx.req.url).host)) {
-      return new Response("CSRF validation failed — origin mismatch", {
+      return new Response("CSRF validation failed: origin mismatch", {
         status: 403,
       });
     }
@@ -80,7 +80,7 @@ export default define.page<typeof handler>(function LoginPage({ data }) {
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Login — Echelon Analytics</title>
+        <title>Login - Echelon Analytics</title>
         <meta name="robots" content="noindex, nofollow" />
         <link rel="icon" href="/favicon.ico" />
         <link rel="stylesheet" href="/styles.css" />
@@ -93,7 +93,7 @@ export default define.page<typeof handler>(function LoginPage({ data }) {
         />
       </head>
       <body class="flex items-center justify-center min-h-screen">
-        <div
+        <main
           class="w-full max-w-sm p-6 border border-[var(--ea-border)] border-t-[3px] border-t-[var(--ea-accent)]"
           style="background:var(--ea-surface)"
         >
@@ -103,6 +103,7 @@ export default define.page<typeof handler>(function LoginPage({ data }) {
               alt="Mette-Maya-Marit: Echelon Analytics Seal of Approval (project mascot)"
               width="200"
               height="200"
+              fetchpriority="high"
               class="opacity-80"
             />
           </div>
@@ -121,7 +122,7 @@ export default define.page<typeof handler>(function LoginPage({ data }) {
               class="text-sm text-[var(--ea-danger)] mb-3 border border-[var(--ea-danger-border)] px-3 py-1.5"
               style="background:var(--ea-danger-bg)"
             >
-              RATE LIMITED — Too many failed attempts. Try again later.
+              RATE LIMITED: too many failed attempts. Try again later.
             </p>
           )}
           {data.error && (
@@ -129,27 +130,37 @@ export default define.page<typeof handler>(function LoginPage({ data }) {
               class="text-sm text-[var(--ea-danger)] mb-3 border border-[var(--ea-danger-border)] px-3 py-1.5"
               style="background:var(--ea-danger-bg)"
             >
-              ACCESS DENIED — Invalid credentials.
+              ACCESS DENIED: wrong username or password.
             </p>
           )}
           <form method="POST">
-            <label class="block text-sm text-[var(--ea-text)] mb-1">
+            <label
+              for="login-username"
+              class="block text-sm text-[var(--ea-text)] mb-1"
+            >
               username
             </label>
             <input
               type="text"
+              id="login-username"
               name="username"
+              autocomplete="username"
               required
-              class="w-full border border-[var(--ea-border)] px-3 py-2 text-sm mb-3 bg-[var(--ea-bg)] text-[var(--ea-primary)] focus:outline-none focus:border-[var(--ea-primary)]"
+              class="w-full border border-[var(--ea-border)] px-3 py-2 text-sm mb-3 bg-[var(--ea-bg)] text-[var(--ea-primary)] focus:border-[var(--ea-primary)]"
             />
-            <label class="block text-sm text-[var(--ea-text)] mb-1">
+            <label
+              for="login-password"
+              class="block text-sm text-[var(--ea-text)] mb-1"
+            >
               password
             </label>
             <input
               type="password"
+              id="login-password"
               name="password"
+              autocomplete="current-password"
               required
-              class="w-full border border-[var(--ea-border)] px-3 py-2 text-sm mb-4 bg-[var(--ea-bg)] text-[var(--ea-primary)] focus:outline-none focus:border-[var(--ea-primary)]"
+              class="w-full border border-[var(--ea-border)] px-3 py-2 text-sm mb-4 bg-[var(--ea-bg)] text-[var(--ea-primary)] focus:border-[var(--ea-primary)]"
             />
             <button
               type="submit"
@@ -173,7 +184,7 @@ export default define.page<typeof handler>(function LoginPage({ data }) {
               {data.version}
             </div>
           </div>
-        </div>
+        </main>
       </body>
     </html>
   );

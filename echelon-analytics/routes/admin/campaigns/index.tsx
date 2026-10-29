@@ -41,17 +41,17 @@ export default define.page<typeof handler>(function CampaignsPage(props) {
     >
       {!PUBLIC_MODE && (
         <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">
             Create Campaign
-          </h3>
+          </h2>
           <CampaignForm />
         </div>
       )}
 
-      <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+      <h2 class="text-sm text-[var(--ea-primary)] mb-2">
         All Campaigns ({campaigns.length})
-      </h3>
-      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+      </h2>
+      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-[var(--ea-border)]">

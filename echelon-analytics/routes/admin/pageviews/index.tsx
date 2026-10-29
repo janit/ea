@@ -124,7 +124,8 @@ export default define.page<typeof handler>(function PageViewsPage(props) {
       <form method="get" class="flex flex-wrap gap-2 mb-4 items-end">
         <select
           name="device"
-          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
+          aria-label="Device"
+          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)]"
           {...submitOnChange}
         >
           <option value="">All devices</option>
@@ -137,7 +138,8 @@ export default define.page<typeof handler>(function PageViewsPage(props) {
 
         <select
           name="country"
-          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
+          aria-label="Country"
+          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)]"
           {...submitOnChange}
         >
           <option value="">All countries</option>
@@ -150,7 +152,8 @@ export default define.page<typeof handler>(function PageViewsPage(props) {
 
         <select
           name="bot"
-          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
+          aria-label="Bot score"
+          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)]"
           {...submitOnChange}
         >
           <option value="" selected={!filters.bot}>All scores</option>
@@ -164,7 +167,8 @@ export default define.page<typeof handler>(function PageViewsPage(props) {
 
         <select
           name="sort"
-          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none"
+          aria-label="Sort by"
+          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)]"
           {...submitOnChange}
         >
           <option value="time_desc" selected={filters.sort === "time_desc"}>
@@ -179,9 +183,10 @@ export default define.page<typeof handler>(function PageViewsPage(props) {
           <input
             type="text"
             name="search"
+            aria-label="Search"
             placeholder="Search visitor or path..."
             value={filters.search}
-            class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none w-48"
+            class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] w-48"
           />
           <button
             type="submit"

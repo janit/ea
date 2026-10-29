@@ -29,14 +29,14 @@ export function Pagination(
   return (
     <nav aria-label="Pagination" class="flex items-center justify-between mt-3">
       <span class="text-xs text-[var(--ea-muted)]">
-        {total} record{total !== 1 ? "s" : ""} — page {page} of {totalPages}
+        {total} record{total !== 1 ? "s" : ""}, page {page} of {totalPages}
       </span>
       <div class="flex gap-2">
         {page > 1
           ? (
             <a
               href={buildUrl(baseUrl, page - 1)}
-              class="px-3 py-1 text-xs border border-[var(--ea-border)] text-[var(--ea-primary)] hover:bg-[var(--ea-surface-alt)]"
+              class="inline-flex items-center px-3 py-1 text-xs border border-[var(--ea-border)] text-[var(--ea-primary)] hover:bg-[var(--ea-surface-alt)]"
             >
               Previous
             </a>
@@ -50,7 +50,7 @@ export function Pagination(
           ? (
             <a
               href={buildUrl(baseUrl, page + 1)}
-              class="px-3 py-1 text-xs border border-[var(--ea-border)] text-[var(--ea-primary)] hover:bg-[var(--ea-surface-alt)]"
+              class="inline-flex items-center px-3 py-1 text-xs border border-[var(--ea-border)] text-[var(--ea-primary)] hover:bg-[var(--ea-surface-alt)]"
             >
               Next
             </a>

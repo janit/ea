@@ -142,9 +142,10 @@ export default define.page<typeof handler>(function EventsPage(props) {
         <input
           type="text"
           name="search"
+          aria-label="Search"
           placeholder="Search type or data..."
           value={filters.search}
-          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] outline-none w-48"
+          class="border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-text)] px-2 py-1 text-xs focus:border-[var(--ea-primary)] w-48"
         />
         <button
           type="submit"

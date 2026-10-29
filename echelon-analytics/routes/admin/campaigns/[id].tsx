@@ -143,13 +143,13 @@ export default define.page<typeof handler>(function CampaignDetailPage(props) {
         </div>
       )}
 
-      <h3 class="text-xs text-[var(--ea-muted)] mb-3">Last 30 days</h3>
+      <h2 class="text-xs text-[var(--ea-muted)] mb-3">Last 30 days</h2>
 
       {/* Sources */}
       {detail.bySource.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">By Source</h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">By Source</h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">
@@ -198,8 +198,8 @@ export default define.page<typeof handler>(function CampaignDetailPage(props) {
       {/* Mediums */}
       {detail.byMedium.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">By Medium</h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">By Medium</h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">
@@ -248,8 +248,8 @@ export default define.page<typeof handler>(function CampaignDetailPage(props) {
       {/* Content */}
       {detail.byContent.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">By Content</h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">By Content</h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">
@@ -286,8 +286,8 @@ export default define.page<typeof handler>(function CampaignDetailPage(props) {
       {/* Term */}
       {detail.byTerm.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">By Term</h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">By Term</h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">
@@ -324,10 +324,10 @@ export default define.page<typeof handler>(function CampaignDetailPage(props) {
       {/* Top Landing Pages */}
       {detail.topPaths.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">
             Top Landing Pages
-          </h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+          </h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">
@@ -370,8 +370,8 @@ export default define.page<typeof handler>(function CampaignDetailPage(props) {
       {/* Daily Trend */}
       {detail.dailyTrend.length > 0 && (
         <>
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">Daily Trend</h3>
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden mb-4">
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">Daily Trend</h2>
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-[var(--ea-border)]">

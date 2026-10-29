@@ -35,7 +35,7 @@ export default define.page<typeof handler>(function ExcludedPage(props) {
       url={state.url}
       telemetryState={state.telemetryState}
     >
-      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+      <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-[var(--ea-border)]">

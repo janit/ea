@@ -60,7 +60,7 @@ export default function RealtimePanel({ siteId }: Props) {
   if (isStale.value) {
     return (
       <p class="text-[var(--ea-muted)] text-sm">
-        Loading realtime data...<span class="cursor"></span>
+        Loading realtime data...
       </p>
     );
   }
@@ -70,7 +70,7 @@ export default function RealtimePanel({ siteId }: Props) {
   return (
     <div>
       <div class="flex gap-2 mb-3 items-center">
-        <span class="bg-[var(--ea-border)] text-[var(--ea-primary)] text-xs px-2 py-1">
+        <span class="bg-[var(--ea-surface-alt)] border border-[var(--ea-border)] text-[var(--ea-text)] text-xs px-2 py-1">
           site: {siteId}
         </span>
         <span class="text-xs text-[var(--ea-muted)]">
@@ -89,10 +89,10 @@ export default function RealtimePanel({ siteId }: Props) {
         </div>
       </div>
 
-      {d.active_paths.length > 0 && (
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+      {
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-            <h3 class="text-sm text-[var(--ea-primary)]">Active Pages</h3>
+            <h2 class="text-sm text-[var(--ea-primary)]">Active Pages</h2>
           </div>
           <table class="w-full text-sm">
             <thead>
@@ -106,6 +106,16 @@ export default function RealtimePanel({ siteId }: Props) {
               </tr>
             </thead>
             <tbody>
+              {d.active_paths.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={2}
+                    class="px-4 py-3 text-xs text-[var(--ea-muted)]"
+                  >
+                    No pages viewed in the last 5 minutes.
+                  </td>
+                </tr>
+              )}
               {d.active_paths.map((p) => (
                 <tr
                   key={p.path}
@@ -120,7 +130,7 @@ export default function RealtimePanel({ siteId }: Props) {
             </tbody>
           </table>
         </div>
-      )}
+      }
     </div>
   );
 }

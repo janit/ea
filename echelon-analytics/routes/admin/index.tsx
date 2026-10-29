@@ -32,7 +32,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
       {/* Live: Now + 60 min + 24h + Recent visitors/events */}
       <DashboardLive siteId={state.siteId} />
 
-      <div class="grid grid-cols-5 gap-3 mb-4">
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
         <div class="kpi-card">
           <div class="kpi-value">{stats.visits.toLocaleString()}</div>
           <div class="kpi-label">Total Visits</div>
@@ -65,15 +65,15 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
 
       {stats.daily_trend.length > 0 && (
         <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 mb-4">
-          <h3 class="text-sm text-[var(--ea-primary)] mb-2">Daily Trend</h3>
+          <h2 class="text-sm text-[var(--ea-primary)] mb-2">Daily Trend</h2>
           <TrendChart data={stats.daily_trend} />
         </div>
       )}
 
-      <div class="grid grid-cols-2 gap-3">
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-            <h3 class="text-sm text-[var(--ea-primary)]">Top Pages</h3>
+            <h2 class="text-sm text-[var(--ea-primary)]">Top Pages</h2>
           </div>
           <table class="w-full text-sm">
             <thead>
@@ -90,6 +90,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
               </tr>
             </thead>
             <tbody>
+              {stats.top_paths.length === 0 && <EmptyRow cols={3} />}
               {stats.top_paths.slice(0, 10).map((p) => (
                 <tr
                   key={p.path}
@@ -111,9 +112,9 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
         </div>
 
         <div class="space-y-3">
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
             <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-              <h3 class="text-sm text-[var(--ea-primary)]">Devices</h3>
+              <h2 class="text-sm text-[var(--ea-primary)]">Devices</h2>
             </div>
             <table class="w-full text-sm">
               <thead>
@@ -127,6 +128,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
                 </tr>
               </thead>
               <tbody>
+                {stats.devices.length === 0 && <EmptyRow cols={2} />}
                 {stats.devices.map((d) => (
                   <tr
                     key={d.device_type}
@@ -144,9 +146,9 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
             </table>
           </div>
 
-          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
             <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-              <h3 class="text-sm text-[var(--ea-primary)]">Countries</h3>
+              <h2 class="text-sm text-[var(--ea-primary)]">Countries</h2>
             </div>
             <table class="w-full text-sm">
               <thead>
@@ -160,6 +162,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
                 </tr>
               </thead>
               <tbody>
+                {stats.countries.length === 0 && <EmptyRow cols={2} />}
                 {stats.countries.map((c) => (
                   <tr
                     key={c.country_code}
@@ -179,10 +182,10 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
         </div>
       </div>
 
-      <div class="grid grid-cols-3 gap-3 mt-3">
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-            <h3 class="text-sm text-[var(--ea-primary)]">Operating Systems</h3>
+            <h2 class="text-sm text-[var(--ea-primary)]">Operating Systems</h2>
           </div>
           <table class="w-full text-sm">
             <thead>
@@ -199,6 +202,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
               </tr>
             </thead>
             <tbody>
+              {stats.os_systems.length === 0 && <EmptyRow cols={3} />}
               {stats.os_systems.map(
                 (o: { os_name: string; views: number; visitors: number }) => (
                   <tr
@@ -221,9 +225,9 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
           </table>
         </div>
 
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-            <h3 class="text-sm text-[var(--ea-primary)]">Browsers</h3>
+            <h2 class="text-sm text-[var(--ea-primary)]">Browsers</h2>
           </div>
           <table class="w-full text-sm">
             <thead>
@@ -240,6 +244,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
               </tr>
             </thead>
             <tbody>
+              {stats.browsers.length === 0 && <EmptyRow cols={3} />}
               {stats.browsers.map(
                 (b: { browser: string; views: number; visitors: number }) => (
                   <tr
@@ -262,9 +267,9 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
           </table>
         </div>
 
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-            <h3 class="text-sm text-[var(--ea-primary)]">Resolutions</h3>
+            <h2 class="text-sm text-[var(--ea-primary)]">Resolutions</h2>
           </div>
           <table class="w-full text-sm">
             <thead>
@@ -281,6 +286,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
               </tr>
             </thead>
             <tbody>
+              {stats.resolutions.length === 0 && <EmptyRow cols={3} />}
               {stats.resolutions.map(
                 (r: {
                   resolution: string;
@@ -309,9 +315,9 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
       </div>
 
       <div class="mt-3">
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-3 border-b border-[var(--ea-border)]">
-            <h3 class="text-sm text-[var(--ea-primary)]">Referrer Sources</h3>
+            <h2 class="text-sm text-[var(--ea-primary)]">Referrer Sources</h2>
           </div>
           <table class="w-full text-sm">
             <thead>
@@ -325,6 +331,7 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
               </tr>
             </thead>
             <tbody>
+              {stats.referrers.length === 0 && <EmptyRow cols={2} />}
               {stats.referrers.map((r) => (
                 <tr
                   key={r.referrer_type}
@@ -345,3 +352,13 @@ export default define.page<typeof handler>(function Dashboard({ data, state }) {
     </AdminNav>
   );
 });
+
+function EmptyRow({ cols }: { cols: number }) {
+  return (
+    <tr>
+      <td colSpan={cols} class="px-4 py-3 text-xs text-[var(--ea-muted)]">
+        Nothing recorded in this date range.
+      </td>
+    </tr>
+  );
+}

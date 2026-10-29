@@ -116,7 +116,7 @@ export default function ExperimentForm(
   }
 
   const inputCls =
-    "border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-primary)] px-2 py-1.5 text-sm w-full focus:border-[var(--ea-primary)] outline-none";
+    "border border-[var(--ea-border)] bg-[var(--ea-bg)] text-[var(--ea-primary)] px-2 py-1.5 text-sm w-full focus:border-[var(--ea-primary)]";
 
   return (
     <form onSubmit={submit}>
@@ -137,43 +137,61 @@ export default function ExperimentForm(
         </div>
       )}
 
-      <div class="grid grid-cols-3 gap-2 mb-2">
-        <input
-          class={inputCls}
-          placeholder="experiment_id"
-          value={experimentId.value}
-          onInput={(
-            e,
-          ) => (experimentId.value = (e.target as HTMLInputElement).value)}
-        />
-        <input
-          class={inputCls}
-          placeholder="name"
-          value={name.value}
-          onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
-        />
-        <input
-          class={inputCls}
-          placeholder="metric_event_type"
-          value={metricEventType.value}
-          onInput={(
-            e,
-          ) => (metricEventType.value = (e.target as HTMLInputElement).value)}
-        />
-      </div>
-
-      <div class="grid grid-cols-4 gap-2 mb-2">
-        <div class="col-span-3">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">
+            Experiment ID
+          </span>
           <input
             class={inputCls}
-            placeholder="description (optional)"
-            value={description.value}
+            placeholder="experiment_id"
+            value={experimentId.value}
             onInput={(
               e,
-            ) => (description.value = (e.target as HTMLInputElement).value)}
+            ) => (experimentId.value = (e.target as HTMLInputElement).value)}
           />
+        </label>
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">Name</span>
+          <input
+            class={inputCls}
+            placeholder="name"
+            value={name.value}
+            onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <label class="block">
+          <span class="block text-xs text-[var(--ea-muted)] mb-0.5">
+            Metric event type
+          </span>
+          <input
+            class={inputCls}
+            placeholder="metric_event_type"
+            value={metricEventType.value}
+            onInput={(
+              e,
+            ) => (metricEventType.value = (e.target as HTMLInputElement).value)}
+          />
+        </label>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-2 mb-2 items-end">
+        <div class="md:col-span-3">
+          <label class="block">
+            <span class="block text-xs text-[var(--ea-muted)] mb-0.5">
+              Description (optional)
+            </span>
+            <input
+              class={inputCls}
+              placeholder="description (optional)"
+              value={description.value}
+              onInput={(
+                e,
+              ) => (description.value = (e.target as HTMLInputElement).value)}
+            />
+          </label>
         </div>
-        <div class="flex items-center gap-1">
+        <label class="flex items-center gap-1">
           <span class="text-xs text-[var(--ea-muted)] whitespace-nowrap">
             alloc %
           </span>
@@ -187,16 +205,20 @@ export default function ExperimentForm(
               (e.target as HTMLInputElement).value,
             ))}
           />
-        </div>
+        </label>
       </div>
 
-      <h6 class="text-sm text-[var(--ea-primary)] mt-3 mb-1">variants</h6>
+      <h3 class="text-sm text-[var(--ea-primary)] mt-3 mb-1">variants</h3>
       {variants.value.map((v, i) => (
-        <div key={i} class="grid grid-cols-12 gap-2 mb-1 items-center">
-          <div class="col-span-3">
+        <div
+          key={i}
+          class="grid grid-cols-2 md:grid-cols-12 gap-2 mb-1 items-center"
+        >
+          <div class="md:col-span-3">
             <input
               class={inputCls}
               placeholder="variant_id"
+              aria-label={`Variant ${i + 1} ID`}
               value={v.variant_id}
               onInput={(e) =>
                 updateVariant(
@@ -206,10 +228,11 @@ export default function ExperimentForm(
                 )}
             />
           </div>
-          <div class="col-span-3">
+          <div class="md:col-span-3">
             <input
               class={inputCls}
               placeholder="name"
+              aria-label={`Variant ${i + 1} name`}
               value={v.name}
               onInput={(e) =>
                 updateVariant(
@@ -219,11 +242,12 @@ export default function ExperimentForm(
                 )}
             />
           </div>
-          <div class="col-span-2">
+          <div class="md:col-span-2">
             <input
               type="number"
               class={inputCls}
               placeholder="weight"
+              aria-label={`Variant ${i + 1} weight`}
               value={v.weight}
               onInput={(e) =>
                 updateVariant(
@@ -233,7 +257,7 @@ export default function ExperimentForm(
                 )}
             />
           </div>
-          <div class="col-span-2">
+          <div class="md:col-span-2">
             <label class="flex items-center gap-1 text-sm text-[var(--ea-text)]">
               <input
                 type="checkbox"
@@ -248,12 +272,13 @@ export default function ExperimentForm(
               control
             </label>
           </div>
-          <div class="col-span-2">
+          <div class="md:col-span-2">
             {variants.value.length > 2 && (
               <button
                 type="button"
                 class="text-xs text-[var(--ea-danger)] hover:text-[var(--ea-danger)]"
                 onClick={() => removeVariant(i)}
+                aria-label={`Remove variant ${i + 1}`}
               >
                 remove
               </button>

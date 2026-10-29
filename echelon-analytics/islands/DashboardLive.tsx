@@ -43,7 +43,7 @@ function MiniChart(
     return (
       <div
         class="flex items-center justify-center text-[var(--ea-muted)] text-xs"
-        style={{ width, height }}
+        style={{ width: "100%", height }}
       >
         No data
       </div>
@@ -86,9 +86,8 @@ function MiniChart(
         </span>
       </div>
       <svg
-        width={width}
-        height={height}
-        class="w-full"
+        viewBox={`0 0 ${width} ${height}`}
+        class="w-full h-auto"
         role="img"
         aria-label={`${label}: ${total} total`}
       >
@@ -191,7 +190,22 @@ export default function DashboardLive({ siteId }: Props) {
   }
 
   if (!data.value) {
-    return <p class="text-[var(--ea-muted)] text-sm">Loading live data...</p>;
+    // Same grid and heights as the loaded view, so the page below does not jump
+    return (
+      <div aria-busy="true">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 flex items-center justify-center min-h-[18rem] text-[var(--ea-muted)] text-sm">
+            Loading live data...
+          </div>
+          <div class="md:col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] min-h-[18rem]" />
+          <div class="md:col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] min-h-[18rem]" />
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
+          <div class="lg:col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] min-h-[16rem]" />
+          <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] min-h-[16rem]" />
+        </div>
+      </div>
+    );
   }
 
   const d = data.value;
@@ -199,7 +213,7 @@ export default function DashboardLive({ siteId }: Props) {
   return (
     <div>
       {/* Now + Charts row */}
-      <div class="grid grid-cols-5 gap-3 mb-4">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
         {/* Now */}
         <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] p-4 flex flex-col items-center justify-center">
           <div class="text-3xl font-bold tabular-nums text-[var(--ea-primary)]">
@@ -217,34 +231,34 @@ export default function DashboardLive({ siteId }: Props) {
         </div>
 
         {/* Last 60 minutes */}
-        <div class="col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] p-3">
+        <div class="md:col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] p-3">
           <MiniChart
             data={d.hourly.visitors}
             color="var(--ea-primary)"
-            label="Visitors — Last 60 min"
+            label="Visitors, last 60 min"
           />
           <div class="mt-2">
             <MiniChart
               data={d.hourly.events}
-              color="#ff6600"
-              label="Events — Last 60 min"
+              color="var(--ea-series-2)"
+              label="Events, last 60 min"
               height={80}
             />
           </div>
         </div>
 
         {/* Last 24 hours */}
-        <div class="col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] p-3">
+        <div class="md:col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] p-3">
           <MiniChart
             data={d.daily.visitors}
             color="var(--ea-primary)"
-            label="Visitors — Last 24 hours"
+            label="Visitors, last 24 hours"
           />
           <div class="mt-2">
             <MiniChart
               data={d.daily.events}
-              color="#ff6600"
-              label="Events — Last 24 hours"
+              color="var(--ea-series-2)"
+              label="Events, last 24 hours"
               height={80}
             />
           </div>
@@ -252,11 +266,11 @@ export default function DashboardLive({ siteId }: Props) {
       </div>
 
       {/* Recent visitors + events */}
-      <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
         {/* Recent visitors */}
-        <div class="col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+        <div class="lg:col-span-2 bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-2 border-b border-[var(--ea-border)]">
-            <h3 class="text-xs text-[var(--ea-primary)]">Recent Visitors</h3>
+            <h2 class="text-xs text-[var(--ea-primary)]">Recent Visitors</h2>
           </div>
           <table class="w-full text-xs">
             <thead>
@@ -334,9 +348,9 @@ export default function DashboardLive({ siteId }: Props) {
         </div>
 
         {/* Recent events */}
-        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-hidden">
+        <div class="bg-[var(--ea-surface)] border border-[var(--ea-border)] overflow-x-auto">
           <div class="px-4 py-2 border-b border-[var(--ea-border)]">
-            <h3 class="text-xs text-[var(--ea-primary)]">Recent Events</h3>
+            <h2 class="text-xs text-[var(--ea-primary)]">Recent Events</h2>
           </div>
           <table class="w-full text-xs">
             <thead>
