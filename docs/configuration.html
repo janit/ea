@@ -114,6 +114,8 @@
 <table>
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
 <tr><td><code>ECHELON_TRUST_PROXY</code></td><td><code>false</code></td><td>Trust <code>X-Forwarded-For</code> / <code>X-Real-IP</code> for client IP</td></tr>
+<tr><td><code>ECHELON_TRUSTED_PROXY_HOPS</code></td><td><code>1</code></td><td>Trusted proxies in front. The client address is taken that many entries from the right of <code>X-Forwarded-For</code>; set 2 with a CDN in front of your proxy</td></tr>
+<tr><td><code>ECHELON_EVENT_BYTES_PER_MIN</code></td><td><code>262144</code></td><td>Bytes of event rows one address may have stored per minute through <code>POST /e</code>. <code>0</code> disables</td></tr>
 <tr><td><code>ECHELON_BEHIND_CLOUDFLARE</code></td><td><code>false</code></td><td>Trust Cloudflare headers (<code>cf-*</code>) for geo and bot data</td></tr>
 <tr><td><code>ECHELON_TRUST_GEO_HEADERS</code></td><td><code>false</code></td><td>Trust <code>cloudfront-viewer-country</code> / <code>x-country-code</code></td></tr>
 <tr><td><code>ECHELON_ALLOWED_ORIGINS</code></td><td><em>(empty)</em></td><td>Comma-separated domains allowed to load the tracker. Empty = all</td></tr>

@@ -67,4 +67,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 USER echelon
 # Single worker — do NOT add --parallel (in-memory state: sessions, buffers, rate limits)
-CMD ["sh", "-c", "exec deno serve -A --port=${ECHELON_PORT} _fresh/server.js"]
+#
+# Permissions are the ones the server uses, not -A: network (listening, the
+# threat feeds), environment (configuration), reading the app, and writing
+# only the data directory. No subprocesses, no FFI, no writes to its own
+# code. A database outside /app/data (ECHELON_DB_PATH) needs its directory
+# added to --allow-read and --allow-write here.
+CMD ["sh", "-c", "exec deno serve --allow-net --allow-env --allow-read=/app --allow-write=/app/data --port=${ECHELON_PORT} _fresh/server.js"]

@@ -61,7 +61,8 @@ export const handler = define.handlers({
       time_desc: "created_at DESC",
       time_asc: "created_at ASC",
     };
-    const orderBy = orderMap[sort];
+    // hasOwn: `sort=constructor` otherwise finds Object.prototype's.
+    const orderBy = Object.hasOwn(orderMap, sort) ? orderMap[sort] : null;
     if (!orderBy) {
       return new Response("Invalid sort parameter", { status: 400 });
     }

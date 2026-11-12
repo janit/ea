@@ -816,6 +816,15 @@ const SCRIPT_HEADERS = {
   "Content-Type": "application/javascript; charset=utf-8",
   "Cache-Control": "public, max-age=300",
 };
+/** For a script whose origin came from X-Forwarded-Host (see handleTracker). */
+const PRIVATE_SCRIPT_HEADERS = {
+  "Content-Type": "application/javascript; charset=utf-8",
+  "Cache-Control": "private, max-age=300",
+  "Vary": "X-Forwarded-Host",
+};
+/** A hostname or bracketed IPv6 literal, with an optional port. */
+const FORWARDED_HOST_RE =
+  /^(?:[a-zA-Z0-9.-]{1,253}|\[[0-9a-fA-F:]+\])(?::\d{1,5})?$/;
 
 // The rendered script depends only on the minute's challenge, the WASM blob
 // and the five values in the key below, so it is built once per combination
@@ -846,9 +855,16 @@ export async function handleTracker(
   // Validate X-Forwarded-Host against ALLOWED_ORIGINS to prevent host-header
   // poisoning that could redirect tracker beacons to an attacker's domain.
   let host = req.headers.get("host") || url.host;
+  // X-Forwarded-Host reaches us untouched from the client unless the proxy
+  // sets it (nginx does not by default). A shared cache in front keys on the
+  // URL and Host, not on this header, so a script built from it must never be
+  // stored there: one poisoned copy would point every site's beacons at
+  // someone else's host until it expired.
+  let sharedCacheable = true;
   if (TRUST_PROXY) {
     const fwdHost = req.headers.get("x-forwarded-host");
-    if (fwdHost) {
+    if (fwdHost && fwdHost !== host && FORWARDED_HOST_RE.test(fwdHost)) {
+      sharedCacheable = false;
       if (ALLOWED_ORIGINS.size === 0) {
         host = fwdHost;
       } else {
@@ -902,7 +918,9 @@ export async function handleTracker(
     trackerCache.set(cacheKey, script);
   }
 
-  return new Response(script, { headers: SCRIPT_HEADERS });
+  return new Response(script, {
+    headers: sharedCacheable ? SCRIPT_HEADERS : PRIVATE_SCRIPT_HEADERS,
+  });
 }
 
 /**

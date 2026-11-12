@@ -1,7 +1,7 @@
 import { define } from "../../utils.ts";
 import { checkCsrf } from "../../lib/csrf.ts";
 import { isAuthLimited, recordAuthFailure } from "../../lib/auth-limit.ts";
-import { getClientIp } from "../../lib/ip.ts";
+import { getClientIp, networkKey } from "../../lib/ip.ts";
 import {
   AUTH_USERNAME,
   constantTimeEquals,
@@ -49,13 +49,14 @@ export const handler = define.middleware([
     if (SECRET) {
       const auth = ctx.req.headers.get("authorization");
       if (auth && auth.startsWith("Bearer ")) {
-        const limitKey = `bearer|${getClientIp(ctx.req)}`;
-        if (isAuthLimited(limitKey)) {
-          return new Response("Too many failed attempts", { status: 429 });
-        }
+        // Token first, limiter second: see routes/api/_middleware.ts.
         if (constantTimeEquals(auth.slice(7), SECRET)) {
           ctx.state.isAuthenticated = true;
           return ctx.next();
+        }
+        const limitKey = `bearer|${networkKey(getClientIp(ctx.req))}`;
+        if (isAuthLimited(limitKey)) {
+          return new Response("Too many failed attempts", { status: 429 });
         }
         recordAuthFailure(limitKey);
       }

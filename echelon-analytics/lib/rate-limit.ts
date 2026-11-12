@@ -2,8 +2,12 @@
 //
 // In-memory sliding window per IP. Drops requests that exceed the limit.
 
-import { RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } from "./config.ts";
-import { getClientIp } from "./ip.ts";
+import {
+  EVENT_BYTES_PER_MIN,
+  RATE_LIMIT_MAX,
+  RATE_LIMIT_WINDOW_MS,
+} from "./config.ts";
+import { getClientIp, networkKey } from "./ip.ts";
 
 interface RateEntry {
   count: number;
@@ -45,7 +49,8 @@ function pruneRateMap(): void {
 export function isRateLimited(req: Request): boolean {
   if (RATE_LIMIT_MAX <= 0) return false;
 
-  const ip = getClientIp(req);
+  // Per network, not per address: an IPv6 /64 is one subscriber.
+  const ip = networkKey(getClientIp(req));
 
   const now = Date.now();
 
@@ -62,4 +67,54 @@ export function isRateLimited(req: Request): boolean {
 
   entry.count++;
   return entry.count > RATE_LIMIT_MAX;
+}
+
+// ── Event storage budget ────────────────────────────────────────────────────
+
+const BUDGET_WINDOW_MS = 60_000;
+const budgetMap = new Map<string, RateEntry>(); // count = bytes this window
+let lastBudgetPrune = Date.now();
+
+function pruneBudgetMap(now: number): void {
+  lastBudgetPrune = now;
+  for (const [key, entry] of budgetMap) {
+    if (now - entry.windowStart > BUDGET_WINDOW_MS) budgetMap.delete(key);
+  }
+  if (budgetMap.size > MAX_MAP_SIZE) {
+    let excess = budgetMap.size - MAX_MAP_SIZE;
+    for (const key of budgetMap.keys()) {
+      if (excess-- <= 0) break;
+      budgetMap.delete(key);
+    }
+  }
+}
+
+/**
+ * Charge `bytes` of stored event data to `key` (a network, see networkKey).
+ * Returns false when that would take the key over its budget for the minute:
+ * the caller does not store the event. `limit` is for tests.
+ */
+export function spendEventBytes(
+  key: string,
+  bytes: number,
+  now: number = Date.now(),
+  limit: number = EVENT_BYTES_PER_MIN,
+): boolean {
+  if (limit <= 0) return true;
+  if (budgetMap.size > MAX_MAP_SIZE || now - lastBudgetPrune > 120_000) {
+    pruneBudgetMap(now);
+  }
+  const entry = budgetMap.get(key);
+  if (!entry || now - entry.windowStart > BUDGET_WINDOW_MS) {
+    budgetMap.set(key, { count: bytes, windowStart: now });
+    return bytes <= limit;
+  }
+  if (entry.count + bytes > limit) return false;
+  entry.count += bytes;
+  return true;
+}
+
+/** Test-only: clear the event budget. */
+export function _resetEventBudget(): void {
+  budgetMap.clear();
 }

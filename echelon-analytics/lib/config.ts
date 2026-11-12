@@ -83,6 +83,16 @@ export const RATE_LIMIT_MAX =
 export const RATE_LIMIT_WINDOW_MS =
   parseInt(Deno.env.get("ECHELON_RATE_LIMIT_WINDOW_MS") ?? "", 10) || 60_000;
 
+// Event storage budget — bytes of event rows one address may have stored per
+// minute through POST /e. The request limit alone lets an address store
+// 100 requests x 20 events x 2 KB a minute, some 5 GB a day, and an
+// events-only flood never touches the burst counter. Default 256 KB a minute,
+// several times what a busy shared address sends. 0 disables.
+export const EVENT_BYTES_PER_MIN = (() => {
+  const n = parseInt(Deno.env.get("ECHELON_EVENT_BYTES_PER_MIN") ?? "", 10);
+  return Number.isFinite(n) && n >= 0 ? n : 262_144;
+})();
+
 // Known bot User-Agent substrings — requests matching these are dropped (not tracked at all).
 // Comma-separated. Matching is case-insensitive.
 export const BOT_UA_PATTERNS: string[] = (() => {
@@ -186,6 +196,17 @@ export const IGNORED_SITES: Set<string> = (() => {
 // Trust proxy headers (X-Forwarded-For, X-Real-IP) for real client IP.
 // Set to "true" when behind a trusted reverse proxy (Nginx, Caddy, etc.)
 export const TRUST_PROXY = Deno.env.get("ECHELON_TRUST_PROXY") === "true";
+
+// How many trusted proxies stand between the internet and this process when
+// ECHELON_TRUST_PROXY is on. The client address is read that many entries in
+// from the RIGHT of X-Forwarded-For: each proxy appends the address it saw, so
+// only the last `hops` entries were written by a proxy of ours, and anything
+// to their left is whatever the client chose to send. Default 1 (one Caddy or
+// nginx). A CDN in front of that proxy makes it 2.
+export const TRUSTED_PROXY_HOPS = Math.max(
+  1,
+  parseInt(Deno.env.get("ECHELON_TRUSTED_PROXY_HOPS") ?? "", 10) || 1,
+);
 
 // Live stats window — how many minutes the admin nav stats bar covers (default: 10).
 export const LIVE_STATS_MINUTES = parseInt(

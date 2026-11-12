@@ -4,6 +4,7 @@
 // Entries with score >= 50 are excluded from daily rollups.
 // No IP addresses are stored — only ephemeral HMAC hashes.
 
+import { networkKey } from "./ip.ts";
 import {
   BEHIND_CLOUDFLARE,
   BOT_SCORE_WEIGHTS_RAW,
@@ -145,7 +146,10 @@ function getHmacKey(): Uint8Array {
 /** Hash an IP address to a hex string using the daily-rotating HMAC key. */
 // deno-lint-ignore require-await
 export async function hashIp(ip: string): Promise<string> {
-  return hmacSha256Hex(getHmacKey(), ip);
+  // An IPv6 address is hashed as its /64 (networkKey): the burst counter, the
+  // bot-address maps and the correlator's distinct-address count all key on
+  // this hash, and one subscriber owns every address in its /64.
+  return hmacSha256Hex(getHmacKey(), networkKey(ip));
 }
 
 /**

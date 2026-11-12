@@ -81,3 +81,61 @@ export function decodeParam(raw: string): string | null {
 export function escapeLike(term: string): string {
   return term.replace(/[\\%_]/g, "\\$&");
 }
+
+/**
+ * Read a request body of at most `maxBytes`, or null if it is larger. The
+ * declared Content-Length is checked first and the stream is cut off at the
+ * cap, so a body with no or a false length is never buffered whole.
+ */
+export async function readBytesCapped(
+  req: Request,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  const declared = parseInt(req.headers.get("content-length") ?? "0", 10);
+  if (declared > maxBytes) return null;
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Parse a form body (urlencoded or multipart) of at most `maxBytes`.
+ * Returns "too_large" over the cap and null if it does not parse.
+ * `req.formData()` on its own buffers whatever is sent.
+ */
+export async function readFormCapped(
+  req: Request,
+  maxBytes: number,
+): Promise<FormData | "too_large" | null> {
+  const bytes = await readBytesCapped(req, maxBytes);
+  if (bytes === null) return "too_large";
+  try {
+    return await new Response(bytes, {
+      headers: { "content-type": req.headers.get("content-type") ?? "" },
+    }).formData();
+  } catch {
+    return null;
+  }
+}

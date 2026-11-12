@@ -484,6 +484,7 @@ export async function handleBeacon(
       // cluster is already statistical evidence, so the shared-NAT caution
       // behind the low suspected penalty does not apply once clustering passed.
       headlessTainted: botIpPenalty > 0,
+      powOk: powPenalty === 0,
       timestamp: Date.now(),
     });
 

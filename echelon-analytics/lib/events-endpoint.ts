@@ -6,7 +6,8 @@
 
 import type { DbAdapter } from "./db/adapter.ts";
 import type { SemanticEvent } from "../types.ts";
-import { getClientIp } from "./ip.ts";
+import { getClientIp, hasUnresolvedClientAddr, networkKey } from "./ip.ts";
+import { spendEventBytes } from "./rate-limit.ts";
 import {
   computeBotScoreWithDetail,
   extractCloudflareSignals,
@@ -53,6 +54,8 @@ interface ClientEvent {
 const MAX_EVENTS_PER_REQUEST = 20;
 const MAX_BODY_BYTES = 16_384; // 16 KB
 const MAX_EVENT_DATA_BYTES = 2_048; // 2 KB per event data
+/** Charged per stored event besides its data: the row's other columns. */
+const EVENT_ROW_OVERHEAD = 200;
 
 class BodyTooLargeError extends Error {}
 
@@ -316,7 +319,12 @@ export async function handleEvents(
   // PoW token verification
   const tok = typeof body.tok === "string" ? body.tok : null;
   const firstSession = events[0]?.sessionId;
-  const sessionIdForPow = typeof firstSession === "string" ? firstSession : "";
+  // Capped as on the beacon: a valid token is remembered under tok:sid:site
+  // for the whole challenge window, and this string is otherwise as long as
+  // the body allows.
+  const sessionIdForPow = typeof firstSession === "string"
+    ? firstSession.slice(0, 64)
+    : "";
   const tokenResult = await verifyToken(tok, siteId, sessionIdForPow);
   // Same waiver as the beacon: see proven-sessions.ts. provenKeys ignores a
   // session id that is not UUID-shaped.
@@ -365,6 +373,11 @@ export async function handleEvents(
     return new Response(null, { status: 204 });
   }
 
+  // What this address may still have stored this minute (lib/rate-limit.ts).
+  // Not charged when the address is unresolved: it then stands for every
+  // client at once.
+  const budgetKey = hasUnresolvedClientAddr(req) ? null : networkKey(ip);
+
   for (let i = 0; i < limit; i++) {
     const ev = events[i];
     if (!ev.type || !ALLOWED_EVENT_TYPES.has(ev.type)) continue;
@@ -372,6 +385,10 @@ export async function handleEvents(
     const data = ev.data ?? {};
     const dataStr = JSON.stringify(data);
     if (dataStr.length > MAX_EVENT_DATA_BYTES) continue;
+    if (
+      budgetKey !== null &&
+      !spendEventBytes(budgetKey, dataStr.length + EVENT_ROW_OVERHEAD)
+    ) break;
 
     const SESSION_RE = /^[0-9a-f-]{36}$/;
     const rawSid = typeof ev.sessionId === "string" ? ev.sessionId : null;

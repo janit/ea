@@ -647,6 +647,8 @@ Two independent auth modes (can be used simultaneously):
 | `ECHELON_VIEW_FLUSH_MS`            | `15000`              | Beacon write buffer flush interval (ms)                      |
 | `ECHELON_EVENT_FLUSH_MS`           | `10000`              | Event write buffer flush interval (ms)                       |
 | `ECHELON_TRUST_PROXY`              | `false`              | Trust X-Forwarded-For / X-Real-IP headers                    |
+| `ECHELON_TRUSTED_PROXY_HOPS`       | `1`                  | Trusted proxies in front; client is that many from the right |
+| `ECHELON_EVENT_BYTES_PER_MIN`      | `262144`             | Event bytes one address may store per minute (0 = off)       |
 | `ECHELON_BEHIND_CLOUDFLARE`        | `false`              | Trust Cloudflare headers (bot score, IP, country)            |
 | `ECHELON_TRUST_GEO_HEADERS`        | `false`              | Trust CloudFront/generic geo headers                         |
 | `ECHELON_COOKIE_CONSENT`           | `false`              | Show consent banner before setting visitor cookie            |
@@ -809,6 +811,14 @@ the SQLite database.
 A Caddy example is in `confs/Caddyfile.example`. Any reverse proxy (Caddy,
 Nginx, etc.) works. Set `ECHELON_TRUST_PROXY=true` to trust `X-Forwarded-For` /
 `X-Real-IP` headers. For Cloudflare, also set `ECHELON_BEHIND_CLOUDFLARE=true`.
+
+The client address is read from the right of `X-Forwarded-For`, one entry per
+trusted proxy (`ECHELON_TRUSTED_PROXY_HOPS`, default 1): each proxy appends the
+address it saw, and anything further left is whatever the client sent. With a
+CDN in front of your proxy set it to 2. An nginx in front should also set
+`X-Forwarded-Host` itself (`proxy_set_header X-Forwarded-Host $host;`), since
+it otherwise passes the client's through. An IPv6 address is rate limited and
+counted as its /64.
 
 The application already sets security headers on HTML responses (CSP,
 `X-Frame-Options`, `X-Content-Type-Options`), so the proxy should **not**

@@ -3,7 +3,11 @@
 // Shared utility for extracting the real client IP from a request.
 // Only trusts proxy/Cloudflare headers when explicitly configured.
 
-import { BEHIND_CLOUDFLARE, TRUST_PROXY } from "./config.ts";
+import {
+  BEHIND_CLOUDFLARE,
+  TRUST_PROXY,
+  TRUSTED_PROXY_HOPS,
+} from "./config.ts";
 
 let warnedProxy = false;
 
@@ -20,6 +24,24 @@ export function setPeerAddr(req: Request, info: Deno.ServeHandlerInfo): void {
 export interface IpFlags {
   behindCloudflare: boolean;
   trustProxy: boolean;
+  /** Trusted proxies in front of us; 1 when omitted. */
+  proxyHops?: number;
+}
+
+/**
+ * The client's entry in an X-Forwarded-For value, given `hops` trusted
+ * proxies. Each proxy appends the address that connected to it, so the entry
+ * `hops` from the right is the one the outermost trusted proxy wrote. Entries
+ * further left came from the client and are not evidence of anything: with
+ * nginx's `$proxy_add_x_forwarded_for`, a client that sends
+ * `X-Forwarded-For: 8.8.8.8` arrives as `8.8.8.8, <its real address>`.
+ * A shorter list than `hops` (a proxy that replaces the header) yields its
+ * leftmost entry.
+ */
+export function forwardedClient(xff: string, hops = 1): string {
+  const parts = xff.split(",");
+  const idx = Math.max(0, parts.length - Math.max(1, hops));
+  return parts[idx].trim();
 }
 
 export interface ResolvedAddr {
@@ -46,7 +68,10 @@ export function resolveClientAddr(
   // Proxy headers — only when behind a trusted reverse proxy
   if (flags.trustProxy) {
     const xff = req.headers.get("x-forwarded-for");
-    if (xff) return { ip: xff.split(",")[0].trim(), untrustedProxy: false };
+    if (xff) {
+      const ip = forwardedClient(xff, flags.proxyHops ?? 1);
+      if (ip) return { ip, untrustedProxy: false };
+    }
 
     const realIp = req.headers.get("x-real-ip");
     if (realIp) return { ip: realIp.trim(), untrustedProxy: false };
@@ -67,7 +92,44 @@ export function resolveClientAddr(
 const FLAGS: IpFlags = {
   behindCloudflare: BEHIND_CLOUDFLARE,
   trustProxy: TRUST_PROXY,
+  proxyHops: TRUSTED_PROXY_HOPS,
 };
+
+/**
+ * The address as a network: an IPv4 address as it is, an IPv6 address cut to
+ * its /64. One subscriber is routed a whole /64 and can source a request from
+ * any of its 2^64 addresses, so anything that counts or limits "addresses"
+ * (the rate limiter, the burst and bot-address maps, the correlator's
+ * distinct-address count) must count the /64 once. IPv4-mapped IPv6
+ * (::ffff:a.b.c.d) is its IPv4 address.
+ */
+export function networkKey(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  let addr = ip.toLowerCase();
+  const zone = addr.indexOf("%");
+  if (zone >= 0) addr = addr.slice(0, zone);
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(addr);
+  if (mapped) return mapped[1];
+  const halves = addr.split("::");
+  if (halves.length > 2) return ip;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  // A trailing dotted quad stands for two groups.
+  const tailGroups = tail.length +
+    (tail.length > 0 && tail[tail.length - 1].includes(".") ? 1 : 0);
+  let groups: string[];
+  if (halves.length === 2) {
+    const fill = 8 - head.length - tailGroups;
+    if (fill < 0) return ip;
+    groups = [...head, ...Array(fill).fill("0"), ...tail];
+  } else {
+    groups = head;
+    if (groups.length !== 8) return ip;
+  }
+  const first = groups.slice(0, 4);
+  if (first.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return ip;
+  return first.map((g) => g.replace(/^0+(?=.)/, "")).join(":") + "::/64";
+}
 
 /**
  * Extract the real client IP from a request, respecting proxy trust settings.

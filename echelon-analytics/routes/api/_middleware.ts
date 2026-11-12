@@ -1,7 +1,7 @@
 import { define } from "../../utils.ts";
 import { checkCsrf } from "../../lib/csrf.ts";
 import { isAuthLimited, recordAuthFailure } from "../../lib/auth-limit.ts";
-import { getClientIp } from "../../lib/ip.ts";
+import { getClientIp, networkKey } from "../../lib/ip.ts";
 import {
   AUTH_USERNAME,
   constantTimeEquals,
@@ -44,21 +44,28 @@ export const handler = define.middleware([
 
     // Check Bearer header (constant-time comparison).
     // Failures are throttled like failed logins — only failures, so a valid
-    // token is never rate-limited no matter how many calls it makes.
+    // token is never refused no matter what else its address has sent.
     if (SECRET) {
       const auth = ctx.req.headers.get("authorization");
       if (auth && auth.startsWith("Bearer ")) {
-        const limitKey = `bearer|${getClientIp(ctx.req)}`;
+        // The right token passes whatever the limiter holds. Checked the
+        // other way round, five wrong guesses from an address shut out the
+        // real client behind it (an office, a shared host, or every client
+        // at once behind an untrusted proxy) for 15 minutes, renewably.
+        // The cost: the limiter does not slow a guesser down, it only stops
+        // answering wrong guesses, so the token's length is what protects
+        // it (main.ts warns about a short one).
+        const token = auth.slice(7);
+        if (constantTimeEquals(token, SECRET)) {
+          ctx.state.isAuthenticated = true;
+          return ctx.next();
+        }
+        const limitKey = `bearer|${networkKey(getClientIp(ctx.req))}`;
         if (isAuthLimited(limitKey)) {
           return Response.json(
             { error: "rate_limited", message: "Too many failed attempts" },
             { status: 429 },
           );
-        }
-        const token = auth.slice(7);
-        if (constantTimeEquals(token, SECRET)) {
-          ctx.state.isAuthenticated = true;
-          return ctx.next();
         }
         recordAuthFailure(limitKey);
       }

@@ -90,6 +90,14 @@ an endpoint's behaviour in `serve*`, not in the route file, and keep
 `tests/fast-path_test.ts` holding the two to the same answer. CORS and origin
 gating live in `lib/cors.ts`.
 
+The client address (`lib/ip.ts`) is read from the right of `X-Forwarded-For`,
+`ECHELON_TRUSTED_PROXY_HOPS` entries in (default 1): entries further left are
+the client's own. Everything that counts or limits addresses (`hashIp`, the
+rate limiter, the auth limiter, the event byte budget) keys on
+`networkKey(ip)`, which is an IPv6 address's /64. `POST /e` charges each stored
+event against a per-address byte budget (`spendEventBytes`,
+`ECHELON_EVENT_BYTES_PER_MIN`).
+
 ### Key Directories (`echelon-analytics/`)
 
 - **`routes/`** — File-system routing. Public tracking endpoints (`ea.js.ts`,
@@ -165,7 +173,11 @@ Two modes (can coexist): Bearer token (`ECHELON_SECRET` env var) and
 username/password (PBKDF2-SHA256, in-memory sessions with 24h TTL). Auth
 middleware at `routes/admin/_middleware.ts` and `routes/api/_middleware.ts`.
 CSRF protection on cookie-authenticated mutating requests (POST, PUT, PATCH,
-DELETE) via Origin/Referer header validation against Host.
+DELETE) via Origin/Referer header validation against Host. Failed logins are
+limited per address + username (5) and per address across usernames (30) in
+15 minutes; the login body is capped at 8 KB. A bearer token is compared
+before the failure limiter is consulted, so wrong guesses never refuse the
+right token: its length is its protection.
 
 ### Anti-Bot System
 
@@ -197,8 +209,11 @@ Multi-layer detection with synchronous and asynchronous components:
    (including rows of anonymised sites). Two guards apply before any visitor is
    penalised: their first print must be at least 12 minutes old, and they must
    not be a proven human (`lib/proven-human.ts`: owns a `validated = 1` view
-   that is not from a datacenter IP). Only penalised visitors' IPs are fed back
-   into the confirmed bot IP map for immediate scoring.
+   that is not from a datacenter IP). Of the penalised visitors' IPs, only
+   those that sent a print without proof of work (`powOk`) or from a tainted
+   address are fed back into the confirmed bot IP map: anyone can complete a
+   cluster around a common fingerprint, and a confirmed address is dropped at
+   ingest with everyone behind it.
 5. **PoW challenges** — `lib/tracker.ts` generates `/ea.js` with an embedded
    WASM blob and a per-minute challenge. The blob rotates every 6 hours on a
    calendar boundary and, when `ECHELON_SECRET` is set, is derived from it, so a

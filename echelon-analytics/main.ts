@@ -34,6 +34,14 @@ if (!SECRET && !AUTH_USERNAME) {
   );
 }
 
+// The bearer token is guarded by its length alone: a wrong guess is refused
+// after five, but the right one is always accepted (routes/api/_middleware.ts).
+if (SECRET && SECRET.length < 24) {
+  console.warn(
+    "[echelon] WARNING: ECHELON_SECRET is shorter than 24 characters. Use a long random value, e.g. `openssl rand -hex 32`.",
+  );
+}
+
 // Initialize database
 const db = await initDb();
 

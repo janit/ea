@@ -30,15 +30,19 @@ export function pruneAuthAttempts(): void {
 // GC stale entries every 5 minutes.
 setInterval(pruneAuthAttempts, 5 * 60 * 1000);
 
-/** True if `key` has exhausted its attempts within the current window. */
-export function isAuthLimited(key: string): boolean {
+/**
+ * True if `key` has exhausted its attempts within the current window. `max`
+ * is for a key that stands for more than one credential (an address across
+ * every username), which needs more room than a single one.
+ */
+export function isAuthLimited(key: string, max = MAX_ATTEMPTS): boolean {
   const entry = attempts.get(key);
   if (!entry) return false;
   if (Date.now() - entry.firstAttempt > WINDOW_MS) {
     attempts.delete(key);
     return false;
   }
-  return entry.attempts >= MAX_ATTEMPTS;
+  return entry.attempts >= max;
 }
 
 /** Record one failed attempt against `key`. */

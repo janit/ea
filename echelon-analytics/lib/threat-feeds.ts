@@ -281,6 +281,41 @@ async function fetchJson(url: string): Promise<unknown> {
   }
 }
 
+/**
+ * Ordinary browsers. The two user-agent feeds are fetched from repositories
+ * anyone with commit access can change, and what they say is applied to every
+ * visitor: one entry such as `.` or `Mozilla` would add the crawler and AI
+ * penalties to all of them and nothing would be counted. An entry that
+ * matches any of these is not about crawlers, whatever its origin, and is
+ * dropped on its own; the rest of the feed is used.
+ */
+const BROWSER_CANARIES = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+];
+
+/** True if a feed's regex pattern matches an ordinary browser. */
+export function patternMatchesBrowsers(pattern: string): boolean {
+  try {
+    const re = new RegExp(pattern, "i");
+    return BROWSER_CANARIES.some((ua) => re.test(ua));
+  } catch {
+    return true;
+  }
+}
+
+/** True if a feed's bot name is too short to mean anything or occurs in an ordinary browser's user agent. */
+export function nameMatchesBrowsers(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  if (n.length < 3) return true;
+  return BROWSER_CANARIES.some((ua) => ua.toLowerCase().includes(n));
+}
+
 /** Fetch crawler UA patterns and compile into a single regex. */
 async function refreshCrawlerUAs(): Promise<void> {
   try {
@@ -295,8 +330,18 @@ async function refreshCrawlerUAs(): Promise<void> {
       if (typeof entry.pattern !== "string") continue;
       try {
         new RegExp(entry.pattern);
-        valid.push(entry.pattern);
-      } catch { /* skip malformed regex */ }
+      } catch {
+        continue; // malformed regex
+      }
+      if (patternMatchesBrowsers(entry.pattern)) {
+        console.warn(
+          `[echelon] threat-feeds: crawler UA pattern ${
+            JSON.stringify(entry.pattern.slice(0, 80))
+          } matches ordinary browsers — skipped`,
+        );
+        continue;
+      }
+      valid.push(entry.pattern);
     }
     if (valid.length === 0) return;
 
@@ -327,7 +372,16 @@ async function refreshAiCrawlers(): Promise<void> {
     const data = await fetchJson(AI_ROBOTS_URL) as Record<string, unknown>;
     if (typeof data !== "object" || data === null) return;
 
-    const names = Object.keys(data).filter((k) => k.length > 0);
+    const names = Object.keys(data).filter((k) => {
+      if (k.length === 0) return false;
+      if (!nameMatchesBrowsers(k)) return true;
+      console.warn(
+        `[echelon] threat-feeds: AI crawler name ${
+          JSON.stringify(k.slice(0, 80))
+        } occurs in ordinary browsers — skipped`,
+      );
+      return false;
+    });
     if (names.length === 0) return;
 
     // Sanity check: reject suspiciously small refreshes
@@ -362,15 +416,22 @@ async function fetchText(url: string): Promise<string> {
   }
 }
 
+const MIN_V4_PREFIX = 8;
+const MIN_V6_PREFIX = 16;
+
 /**
  * Sort a CIDR string into the right family. Anything unparseable is skipped,
  * never widened: a feed entry must be a bare address, "/", and a decimal
- * prefix length of 1 or more. A /0 would flag every visitor as a datacenter.
+ * prefix length. A /0 would flag every visitor as a datacenter, and so would
+ * a pair of /1s, so a range wider than any provider owns (IPv4 /8, IPv6 /16)
+ * is skipped too.
  */
 function addCidr(into: DcRanges, cidr: unknown): void {
   if (typeof cidr !== "string") return;
   const c = cidr.trim();
   if (!/^[0-9a-fA-F:.]+\/[1-9]\d{0,2}$/.test(c)) return;
+  const prefix = parseInt(c.slice(c.indexOf("/") + 1), 10);
+  if (prefix < (c.includes(":") ? MIN_V6_PREFIX : MIN_V4_PREFIX)) return;
   if (c.includes(":")) {
     const r = parseCidrV6(c);
     if (r) into.v6.push(r);

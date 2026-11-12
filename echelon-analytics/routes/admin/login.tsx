@@ -11,7 +11,18 @@ import {
 import { DEFAULT_THEME } from "../../lib/themes.ts";
 import { verifyPassword } from "../../lib/auth.ts";
 import { createSession } from "../../lib/session.ts";
-import { getClientIp } from "../../lib/ip.ts";
+import {
+  getClientIp,
+  hasUnresolvedClientAddr,
+  networkKey,
+} from "../../lib/ip.ts";
+import { readFormCapped } from "../../lib/request.ts";
+
+/** A username and a password fit many times over. */
+const MAX_LOGIN_BODY = 8192;
+const MAX_USERNAME = 256;
+/** Failures one address may make across all usernames per window. */
+const MAX_FAILURES_PER_ADDRESS = 30;
 
 export const handler = define.handlers({
   GET(_ctx) {
@@ -33,10 +44,37 @@ export const handler = define.handlers({
       });
     }
 
-    const ip = getClientIp(ctx.req);
-    const form = await ctx.req.formData();
-    const username = (form.get("username") as string) ?? "";
-    const password = (form.get("password") as string) ?? "";
+    // This endpoint is open to anyone, and what it reads is kept: the
+    // limiter below is keyed on the username. Uncapped, 300 posts with a
+    // 1 MB username held 300 MB, and the map allows 50 000 entries.
+    const form = await readFormCapped(ctx.req, MAX_LOGIN_BODY);
+    if (form === "too_large") {
+      return new Response("Payload too large", { status: 413 });
+    }
+    if (form === null) return new Response("Bad request", { status: 400 });
+    const field = (name: string) => {
+      const v = form.get(name);
+      return typeof v === "string" ? v : "";
+    };
+    const username = field("username");
+    const password = field("password");
+    // No account has a longer name, so a longer one is a failure outright:
+    // answered like any wrong login, without hashing or remembering it.
+    if (username.length > MAX_USERNAME) {
+      return page({ error: true, rateLimited: false, version: VERSION });
+    }
+
+    const ip = networkKey(getClientIp(ctx.req));
+    // The per-username key below never limits someone who sends a new
+    // username each time, and every attempt costs a 600 000-round PBKDF2.
+    // So the address is limited too, across usernames, with enough room that
+    // people sharing one are not locked out by each other's typos. Not when
+    // the address is unresolved: then it stands for every client at once (see
+    // the note on limitKey).
+    const addrKey = hasUnresolvedClientAddr(ctx.req) ? null : `login|${ip}`;
+    if (addrKey && isAuthLimited(addrKey, MAX_FAILURES_PER_ADDRESS)) {
+      return page({ error: false, rateLimited: true, version: VERSION });
+    }
 
     // Key the limiter on IP *and* username. Keyed on IP alone, an instance
     // behind a reverse proxy without ECHELON_TRUST_PROXY sees every request as
@@ -69,6 +107,7 @@ export const handler = define.handlers({
 
     // Record failed attempt for rate limiting
     recordAuthFailure(limitKey);
+    if (addrKey) recordAuthFailure(addrKey);
 
     return page({ error: true, rateLimited: false, version: VERSION });
   },

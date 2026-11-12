@@ -76,6 +76,12 @@ interface RequestPrint {
   siteId: string;
   fingerprint: Fingerprint;
   headlessTainted: boolean; // IP was seen with HeadlessChrome or similar
+  /**
+   * The request carried a valid proof-of-work token, or its session had
+   * presented one. Decides whether a cluster may ban the address at ingest
+   * (see the sweep); absent means it did not.
+   */
+  powOk?: boolean;
   timestamp: number;
 }
 
@@ -176,8 +182,14 @@ interface ClusterMatch {
   fpKeyStr: string;
   fingerprint: Fingerprint;
   ipHashes: Set<string>;
-  /** visitor id → when first seen, and the IP hashes seen with it. */
-  visitors: Map<string, { firstSeen: number; ipHashes: Set<string> }>;
+  /**
+   * visitor id → when first seen, the IP hashes seen with it, and those of
+   * them that sent a request without proof of work or from a tainted address.
+   */
+  visitors: Map<
+    string,
+    { firstSeen: number; ipHashes: Set<string>; bannable: Set<string> }
+  >;
   hasTainted: boolean;
 }
 
@@ -228,11 +240,16 @@ async function sweep(db: DbAdapter, now: number = Date.now()): Promise<void> {
     group.ipHashes.add(p.ipHash);
     let seen = group.visitors.get(p.visitorId);
     if (!seen) {
-      seen = { firstSeen: p.timestamp, ipHashes: new Set() };
+      seen = {
+        firstSeen: p.timestamp,
+        ipHashes: new Set(),
+        bannable: new Set(),
+      };
       group.visitors.set(p.visitorId, seen);
     }
     seen.firstSeen = Math.min(seen.firstSeen, p.timestamp);
     seen.ipHashes.add(p.ipHash);
+    if (!p.powOk || p.headlessTainted) seen.bannable.add(p.ipHash);
     if (p.headlessTainted) group.hasTainted = true;
   }
 
@@ -326,8 +343,18 @@ async function sweep(db: DbAdapter, now: number = Date.now()): Promise<void> {
     // Only after the DB has been successfully updated do we record the
     // IPs as confirmed bots in the fast-path map. This keeps in-memory
     // state and DB rows in sync across restarts.
+    //
+    // A cluster is evidence about a fingerprint, and anyone can add members
+    // to one: a few requests copying the commonest phone's user agent and
+    // screen size complete a cluster around every real visitor who has it.
+    // The retroactive penalty above is bounded (it spares proven humans and
+    // touches only rows already written), but a confirmed address is dropped
+    // at ingest for an hour together with everyone else behind it, before
+    // any of them can prove anything. So an address is confirmed only if it
+    // gave evidence of its own: a request without proof of work, or a
+    // headless taint. A browser that solved the challenge keeps its address.
     for (const id of visitorIds) {
-      for (const ipHash of cluster.visitors.get(id)!.ipHashes) {
+      for (const ipHash of cluster.visitors.get(id)!.bannable) {
         recordConfirmedBotIp(ipHash);
       }
     }
