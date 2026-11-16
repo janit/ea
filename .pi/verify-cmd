@@ -1,0 +1,2 @@
+# The fast gate: format, lint, type-check and the server-side tests (no E2E, no network needed).
+cd echelon-analytics && deno task check
