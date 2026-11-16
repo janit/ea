@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Install the locked dependencies into echelon-analytics/node_modules (nodeModulesDir is manual).
-set -euo pipefail
-cd "$(dirname "$0")/../echelon-analytics"
+# tehas runs this with sh from the worktree root, so it is POSIX sh.
+set -eu
+cd echelon-analytics
 deno install --frozen
