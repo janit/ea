@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Install the locked dependencies into echelon-analytics/node_modules (nodeModulesDir is manual).
+set -euo pipefail
+cd "$(dirname "$0")/../echelon-analytics"
+deno install --frozen
